@@ -21,3 +21,8 @@ Ideas for the Kindle Scribe port that are not built yet. Nothing here is committ
   `platforms/kindle/services.cpp`; the downloadable-dictionary service of the other hosts needs porting.
 - KOReader sync against a real sync server. The client builds with TLS but has not been tried on the device.
 - Pen and palm-rejection handling.
+- Portuguese. Books in Portuguese hyphenate already (the shared assets carry the Portuguese and Brazilian
+  patterns), but the rest is missing on the Kindle: a Portuguese dictionary for lookups (the catalogue has English and
+  Spanish to Portuguese; a Portuguese to Portuguese one would need adding, on top of the dictionary service above),
+  a Portuguese interface (only `assets/en.strings` exists), and a keyboard layout with the accented letters on the
+  first page.
