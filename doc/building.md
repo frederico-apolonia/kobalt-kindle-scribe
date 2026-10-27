@@ -147,3 +147,7 @@ For a local release build, set `KOBALT_ANDROID_RELEASE=1`, `KOBALT_RELEASE_VERSI
 Android uses dynamically linked Qt libraries. To use a modified compatible Qt SDK, prepare it through `kobuild`, then rebuild Kobalt with that SDK and sign the APK with your own key. A different key cannot update an official installation. Use the separate debug application ID for testing, or back up app data before removing the official installation.
 
 Successful tag builds assemble a draft GitHub release with the three packages, source archive, build metadata and `SHA256SUMS`. They do not publish it. An existing published release cannot be overwritten. Review the draft and its signing report before publishing. Branch builds retain workflow artifacts only.
+
+## Kindle
+
+The Kindle Scribe target has its own SDK (Qt, `qtsensors`, FBInk and a sysroot), prepared once outside the application build, and a Docker-based cross build under `platforms/kindle/sdk/`. [Kobalt on the Kindle Scribe](kindle.md) lists the inputs, the build and install steps and how to test without the panel.

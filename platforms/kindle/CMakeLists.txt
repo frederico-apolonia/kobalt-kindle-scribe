@@ -91,7 +91,8 @@ set(resources "${KOBALT_ROOT}/assets")
 file(GLOB notices CONFIGURE_DEPENDS "${resources}/notices/*")
 qt_add_resources(kobalt_kindle notices PREFIX "/kobalt" BASE "${resources}" FILES "${resources}/acknowledgments.json" ${notices})
 
-# Runtime layout next to the executable: kobalt, assets/ (verified above), lib/ and plugins/ come from the SDK.
+# Runtime layout next to the executable: kobalt, assets/ (verified above) and the plugin come from this build; lib/
+# (Qt and the C++ runtime) and plugins/sqldrivers come from the Qt SDK.
 set(package "${CMAKE_CURRENT_BINARY_DIR}/package")
 set(staged)
 foreach(relative IN LISTS bundled)
@@ -107,4 +108,21 @@ list(APPEND staged "${package}/assets/manifest.json")
 add_custom_command(OUTPUT "${package}/kobalt"
     COMMAND "${CMAKE_STRIP}" -o "${package}/kobalt" "$<TARGET_FILE:kobalt_kindle>"
     DEPENDS kobalt_kindle VERBATIM)
-add_custom_target(package DEPENDS "${package}/kobalt" ${staged})
+# The display and input plugin, the framebuffer guard and the launcher scripts.
+set(FBINK_SOURCE "$ENV{FBINK_SOURCE}" CACHE PATH "FBInk source tree with Release/libfbink.a built for the Kindle")
+add_subdirectory(display)
+add_custom_command(OUTPUT "${package}/plugins/platforms/libqkindlefb.so"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${package}/plugins/platforms"
+    COMMAND "${CMAKE_STRIP}" -o "${package}/plugins/platforms/libqkindlefb.so" "$<TARGET_FILE:qkindlefb>"
+    DEPENDS qkindlefb VERBATIM)
+add_custom_command(OUTPUT "${package}/fbguard"
+    COMMAND "${CMAKE_STRIP}" -o "${package}/fbguard" "$<TARGET_FILE:fbguard>"
+    DEPENDS fbguard VERBATIM)
+foreach(script kobalt.sh library-entry.sh)
+    add_custom_command(OUTPUT "${package}/${script}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/package/${script}" "${package}/${script}"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/package/${script}" VERBATIM)
+    list(APPEND staged "${package}/${script}")
+endforeach()
+add_custom_target(package DEPENDS "${package}/kobalt" "${package}/plugins/platforms/libqkindlefb.so"
+    "${package}/fbguard" ${staged})

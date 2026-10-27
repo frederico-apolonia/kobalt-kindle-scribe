@@ -1,6 +1,8 @@
 #include "services.h"
 #include "interfaces/reader/ui/style/fonts.h"
 #include "keyboard.h"
+#include "sleep_screen.h"
+#include "support/strings.h"
 #include "light_device.h"
 #include <QDir>
 #include <QFile>
@@ -176,18 +178,46 @@ private:
         dock->dismiss();
     }
 };
+// The window's sleep screen shows the reader's sleep image; the panel keeps it while the device sleeps.
 class Presentation final : public WindowPresentation {
 public:
+    explicit Presentation(SleepScreen *sleep) : sleep(sleep) {}
+    ~Presentation() override {
+        clearSleepScreen();
+    }
     void pauseBackground(bool) override {}
     void resumeBackground() override {}
     void resumeAndRepaintBackground() override {}
+    bool supportsSleepScreen() const override {
+        return !sleep.isNull();
+    }
+    bool presentSleepScreen(QImage image, Qt::ScreenOrientation) override {
+        return sleep && sleep->present(image);
+    }
+    bool updateSleepScreen(QImage image, const QRect &damage) override {
+        return sleep && sleep->refresh(image, damage);
+    }
+    void clearSleepScreen() override {
+        if (sleep)
+            sleep->clear();
+    }
     void acceptHandoff(QDialog &, const std::function<void()> &accept) override {
         accept();
     }
+
+private:
+    QPointer<SleepScreen> sleep;
 };
 }
-ReaderHostServices readerServices(std::shared_ptr<LightDevice> light, OnScreenKeyboard *keyboard) {
+ReaderHostServices readerServices(std::shared_ptr<LightDevice> light, const HostWidgets &widgets) {
     ReaderHostServices result;
+    // The reader's back button returns to Kobalt's library; the library's More menu leaves the application.
+    result.exitLabel = strings::get("library.title");
+    // The Amazon screen saver is not available while Kobalt runs: the first choice leaves the page as it is.
+    // The Scribe's page is 4.6 million pixels, a little above the default cap.
+    result.maxSleepPixels = 6 * 1024 * 1024;
+    result.stockSleepLabel = QObject::tr("Page as it is");
+    result.stockSleepDescription = QObject::tr("The page stays on the screen while the device sleeps.");
     // The Scribe panel is monochrome: colorDisplay stays unset.
     result.browserAvailable = [] {
         return false;
@@ -232,11 +262,11 @@ ReaderHostServices readerServices(std::shared_ptr<LightDevice> light, OnScreenKe
     result.dictionary = [] {
         return std::make_unique<Dictionary>();
     };
-    result.keyboard = [keyboard](QWidget *, QLineEdit *editor) {
+    result.keyboard = [keyboard = widgets.keyboard](QWidget *, QLineEdit *editor) {
         return std::make_unique<Keyboard>(keyboard, editor);
     };
-    result.presentation = [](QWidget *) {
-        return std::make_unique<Presentation>();
+    result.presentation = [sleep = widgets.sleep](QWidget *) {
+        return std::make_unique<Presentation>(sleep);
     };
     return result;
 }

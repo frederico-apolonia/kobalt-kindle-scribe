@@ -5,12 +5,14 @@
 #include "lifecycle.h"
 #include "light_device.h"
 #include "services.h"
+#include "sleep_screen.h"
 #include "assets/assets.h"
 #include "assets/bundled_fonts.h"
 #include "interfaces/reader/ui/style/fonts.h"
 #include "library/library_store.h"
 #include "library/scanner.h"
 #include "reading/reading_density.h"
+#include "reading/sleep_screen.h"
 #include "storage/reader_storage.h"
 #include "support/diagnostics.h"
 #include <QAbstractButton>
@@ -74,7 +76,7 @@ class Window : public QWidget {
 public:
     Window(EngineFontInputs fonts, QString placeholder, std::shared_ptr<kindle::LightDevice> light)
         : controller(storage::Paths{homeFolder() + "/state/config"}, std::move(fonts), std::move(placeholder),
-                     [this, light] { return kindle::readerServices(light, keyboard); }, [](Qt::ScreenOrientation) {}),
+                     [this, light] { return kindle::readerServices(light, {keyboard, sleepScreen}); }, [](Qt::ScreenOrientation) {}),
           store(homeFolder() + "/state/config", std::make_shared<library::LocalSource>()) {
         setWindowTitle("Kobalt");
         QPalette colors;
@@ -86,7 +88,7 @@ public:
         setAutoFillBackground(true);
         layout = new QStackedLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
-        start = new android::StartScreen(kindle::readerServices(light, nullptr).presentation, store);
+        start = new android::StartScreen(kindle::readerServices(light, {}).presentation, store);
         start->setDark(controller.preferences().value("dark_mode").toBool(false));
         // No document pickers on the Kindle, and no back key: the library's More sheet offers Exit.
         start->setHostActions(false, true);
@@ -95,13 +97,16 @@ public:
         layout->addWidget(canvas);
         canvas->viewportResized = [this] { canvas->fitContent(); };
         if (qEnvironmentVariableIntValue("KOBALT_KINDLE_TRACE")) {
-            const auto battery = kindle::readerServices(light, nullptr).battery();
+            const auto battery = kindle::readerServices(light, {}).battery();
             qInfo() << "kindle battery" << battery.percent << "charging" << battery.charging << "full" << battery.fullyCharged;
         }
         // There is no system keyboard: dock Kobalt's own while a text field, in the library or a reader, has focus.
         // The fields live inside graphics scenes, where the application's focus widget is the view, not the field,
         // so the field's own focus events are the signal.
         keyboard = new kindle::OnScreenKeyboard(this);
+        sleepScreen = new kindle::SleepScreen(this);
+        // Tells the display plugin that this process paints the sleep picture: it waits for it before pausing.
+        qApp->setProperty("kindlefb_sleep_screen", true);
         qApp->installEventFilter(this);
         connect(start, &android::StartScreen::bookRequested, this, &Window::openBook);
         connect(start, &android::StartScreen::exitRequested, this, &QWidget::close);
@@ -145,10 +150,8 @@ public:
                 QCoreApplication::quit();
             }
         });
-        connect(&lifecycle, &kindle::Lifecycle::goingToSleep, this, [this](int) {
-            if (auto *reader = controller.window())
-                reader->checkpoint();
-        });
+        connect(&lifecycle, &kindle::Lifecycle::goingToSleep, this, [this](int) { enterSleep(); });
+        connect(&lifecycle, &kindle::Lifecycle::wokeUp, this, [this](int) { leaveSleep(); });
         connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
             if (state != Qt::ApplicationActive && controller.window())
                 controller.window()->checkpoint();
@@ -196,6 +199,13 @@ public:
                 }
             });
         }
+        // Test hook: KOBALT_KINDLE_SLEEP="<ms>[,<ms>]" runs the sleep path that long after start, and the wake path at
+        // the second time, without a power event.
+        const auto sleepTimes = qEnvironmentVariable("KOBALT_KINDLE_SLEEP").split(',', Qt::SkipEmptyParts);
+        if (!sleepTimes.isEmpty())
+            QTimer::singleShot(sleepTimes[0].toInt(), this, [this] { enterSleep(); });
+        if (sleepTimes.size() > 1)
+            QTimer::singleShot(sleepTimes[1].toInt(), this, [this] { leaveSleep(); });
         const auto autoOpen = qEnvironmentVariable("KOBALT_KINDLE_OPEN");
         if (!autoOpen.isEmpty())
             QTimer::singleShot(3000, this, [this, autoOpen] { openBook(autoOpen); });
@@ -204,6 +214,7 @@ public:
 private:
     // Declared first: the reader's services are built from it, and a reader may be opened at any time.
     kindle::OnScreenKeyboard *keyboard = nullptr;
+    kindle::SleepScreen *sleepScreen = nullptr;
     android::ReaderController controller;
     library::Store store;
     kindle::Lifecycle lifecycle;
@@ -211,12 +222,42 @@ private:
     android::StartScreen *start;
     android::WidgetCanvas *canvas;
     QString openedKey;
-    bool closing = false, failed = false, layoutRepairPending = false;
+    bool closing = false, failed = false, layoutRepairPending = false, asleep = false;
     QSize pixels() const {
         if (canvas->isVisible())
             return canvas->pixelSize();
         const auto area = contentsRect().size();
         return {qRound(area.width() * devicePixelRatioF()), qRound(area.height() * devicePixelRatioF())};
+    }
+    // The reader saves its place and builds its sleep image (cover or dimmed page, with progress and battery), then
+    // hands the screen to it. The first choice, or any state the reader will not capture (a dialog open, a preview),
+    // leaves the page as it is.
+    void enterSleep() {
+        auto *reader = controller.window();
+        const auto mode = sleep::mode(controller.preferences());
+        if (!reader || asleep || !reader->isVisible())
+            return;
+        reader->checkpoint();
+        if (mode == sleep::Mode::Stock)
+            return;
+        reader->sleepReader();
+        reader->sleepViewReady();
+        if (sleepScreen->presented()) {
+            asleep = true;
+            return;
+        }
+        // No image: put the reader back as it was.
+        reader->wakeReader();
+    }
+    void leaveSleep() {
+        auto *reader = controller.window();
+        if (!asleep)
+            return;
+        asleep = false;
+        if (!reader)
+            return;
+        reader->prepareWake();
+        reader->wakeReader();
     }
     void recordProgress() {
         if (openedKey.isEmpty())
@@ -357,6 +398,17 @@ int main(int argc, char **argv) {
     QApplication::setFont(ui::interfaceFont());
     initializeDiagnostics(homeFolder() + "/state/diagnostics");
     auto light = std::make_shared<kindle::LightDevice>();
+    // The Amazon screen saver is not available, so a new profile starts with Kobalt's own sleep screen (the book
+    // cover). An explicit choice, including the first one, is kept.
+    {
+        const storage::Paths paths{homeFolder() + "/state/config"};
+        auto saved = storage::readPreferences(paths.preferences());
+        if ((saved.status == storage::ReadStatus::Missing || saved.status == storage::ReadStatus::Ok) &&
+            !saved.object.contains(sleep::preferenceKey) && !saved.object.contains("kobalt_sleep_screen")) {
+            saved.object[sleep::preferenceKey] = sleep::value(sleep::Mode::Cover);
+            storage::writePreferences(paths.preferences(), saved.object);
+        }
+    }
     Window window(engineFontInputs(assets, {}, homeFolder() + "/fonts", {}), placeholderFontFamily(assets, copies), light);
     window.showFullScreen();
     // Test hook: leave cleanly after a number of seconds so a dry run can dump its last frame.

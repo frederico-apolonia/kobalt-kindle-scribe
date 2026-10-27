@@ -5,7 +5,12 @@
 namespace kobalt::kindle {
 class LightDevice;
 class OnScreenKeyboard;
+class SleepScreen;
+// Widgets the window owns and every reader of the process shares; they outlive each reader window.
+struct HostWidgets {
+    OnScreenKeyboard *keyboard = nullptr;
+    SleepScreen *sleep = nullptr;
+};
 // `light` is the one front-light device of the process; it outlives every reader window.
-// `keyboard` is the window's on-screen keyboard, likewise owned by the window.
-ReaderHostServices readerServices(std::shared_ptr<LightDevice> light, OnScreenKeyboard *keyboard);
+ReaderHostServices readerServices(std::shared_ptr<LightDevice> light, const HostWidgets &widgets);
 }

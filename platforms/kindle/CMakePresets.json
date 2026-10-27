@@ -9,7 +9,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "QT_HOST_PATH": "$env{QT_HOST_PATH}",
-        "QT_ADDITIONAL_PACKAGES_PREFIX_PATH": "$env{QT_KINDLE_SENSORS_PATH}"
+        "QT_ADDITIONAL_PACKAGES_PREFIX_PATH": "$env{QT_KINDLE_SENSORS_PATH}",
+        "FBINK_SOURCE": "$env{FBINK_SOURCE}"
       }
     }
   ],

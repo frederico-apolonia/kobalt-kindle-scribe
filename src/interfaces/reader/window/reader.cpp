@@ -171,10 +171,10 @@ void Reader::sleepReader() {
     const bool foreground = !modal || modal == this || isAncestorOf(modal);
     const auto mode = sleep::mode(preferences);
     if (mode != sleep::Mode::Stock && presentation->supportsSleepScreen() && foreground && sleepPixels > 0 &&
-        sleepPixels <= 4 * 1024 * 1024 && readyForPresentation() && !appearanceEdit.panelOpen() &&
+        sleepPixels <= services.maxSleepPixels && readyForPresentation() && !appearanceEdit.panelOpen() &&
         !model->temporaryTypography()) {
         const bool useCover = mode == sleep::Mode::Cover && !sleepCover.isNull();
-        QImage frame = useCover ? sleepCoverBackground(sleepCover, page->size()) : page->snapshot(true);
+        QImage frame = useCover ? sleepCoverBackground(sleepCover, page->size(), services.maxSleepPixels) : page->snapshot(true);
         if (!frame.isNull()) {
             // Capture only the page, including its header and footer. Menus,
             // dialogs and a temporary typography preview are not sleep content.
