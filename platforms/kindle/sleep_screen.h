@@ -1,6 +1,7 @@
 #pragma once
 #include <QImage>
 #include <QWidget>
+#include "platform/api/reader_host_services.h"
 
 namespace kobalt::kindle {
 // The picture the panel keeps while the device sleeps: the reader's sleep image (book cover or dimmed page with
@@ -18,6 +19,8 @@ public:
     bool presented() const {
         return isVisible();
     }
+    // The picture for a sleep with no book open: the Kobalt mark and name, with the sleep card (battery included).
+    static QImage libraryPicture(QSize size, const BatteryStatus &battery);
 
 protected:
     void paintEvent(QPaintEvent *) override;

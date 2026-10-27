@@ -209,6 +209,9 @@ private:
     QPointer<SleepScreen> sleep;
 };
 }
+BatteryStatus batteryStatus() {
+    return readBattery();
+}
 ReaderHostServices readerServices(std::shared_ptr<LightDevice> light, const HostWidgets &widgets) {
     ReaderHostServices result;
     // The reader's back button returns to Kobalt's library; the library's More menu leaves the application.

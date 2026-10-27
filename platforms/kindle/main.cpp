@@ -234,8 +234,17 @@ private:
     // leaves the page as it is.
     void enterSleep() {
         auto *reader = controller.window();
+        if (asleep)
+            return;
+        if (!reader) {
+            // No book open: the library is showing. Opening or closing a book leaves the screen as it is.
+            if (start->isVisible() && !closing &&
+                sleepScreen->present(kindle::SleepScreen::libraryPicture(size(), kindle::batteryStatus())))
+                asleep = true;
+            return;
+        }
         const auto mode = sleep::mode(controller.preferences());
-        if (!reader || asleep || !reader->isVisible())
+        if (!reader->isVisible())
             return;
         reader->checkpoint();
         if (mode == sleep::Mode::Stock)
@@ -254,8 +263,10 @@ private:
         if (!asleep)
             return;
         asleep = false;
-        if (!reader)
+        if (!reader) {
+            sleepScreen->clear();
             return;
+        }
         reader->prepareWake();
         reader->wakeReader();
     }
