@@ -51,6 +51,15 @@ struct ReaderHostServices {
     // Optional host-resolved high-resolution cover. The reader decodes it on
     // its worker and falls back to the publication cover if it is unusable.
     QString coverImagePath;
+    // Optional label for the reader's back button, for hosts where it returns to a library instead of leaving the
+    // application. Empty keeps "Exit Kobalt".
+    QString exitLabel;
+    // Optional wording for the sleep screen choice that leaves the device's own screen in place. The default names
+    // Kobo's built-in sleep screen. The description is shown with the label.
+    QString stockSleepLabel, stockSleepDescription;
+    // The most pixels in the reader's page that the sleep screen will capture (4 bytes each); a larger page keeps
+    // the host's own sleep screen. The default is 4 MiB of pixels.
+    qint64 maxSleepPixels = 4 * 1024 * 1024;
     // Optional host reader-selection preference. Both callbacks are supplied
     // together; a successful write affects future book openings.
     std::function<bool()> automaticBookOpening;

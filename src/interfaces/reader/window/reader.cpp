@@ -196,10 +196,10 @@ sleep::Snapshot Reader::captureSleepScreen() {
     const bool foreground = !modal || modal == this || isAncestorOf(modal);
     const auto mode = sleep::mode(preferences);
     if (mode == sleep::Mode::Stock || !presentation->supportsSleepScreen() || !foreground || pixels <= 0 ||
-        pixels > 4 * 1024 * 1024 || !readyForPresentation() || appearanceEdit.panelOpen() || model->temporaryTypography())
+        pixels > services.maxSleepPixels || !readyForPresentation() || appearanceEdit.panelOpen() || model->temporaryTypography())
         return {};
     const bool useCover = mode == sleep::Mode::Cover && !sleepCover.isNull();
-    auto frame = useCover ? sleepCoverBackground(sleepCover, page->size()) : page->snapshot(true);
+    auto frame = useCover ? sleepCoverBackground(sleepCover, page->size(), services.maxSleepPixels) : page->snapshot(true);
     if (frame.isNull())
         return {};
     const int percent = qBound(0, int(100.0 * model->page() / qMax(1, model->pages())), 100);

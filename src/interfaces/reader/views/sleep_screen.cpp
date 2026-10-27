@@ -275,8 +275,8 @@ QString sleepTimeLeft(qint64 milliseconds) {
                                      : strings::get("stats.duration_hours").arg(minutes / 60).arg(minutes % 60);
     return strings::get("sleep.time_left").arg(time);
 }
-QImage sleepCoverBackground(const QImage &cover, QSize size) {
-    if (cover.isNull() || size.isEmpty() || qint64(size.width()) * size.height() > 4 * 1024 * 1024) {
+QImage sleepCoverBackground(const QImage &cover, QSize size, qint64 maxPixels) {
+    if (cover.isNull() || size.isEmpty() || qint64(size.width()) * size.height() > maxPixels) {
         return {};
     }
     QImage background(size, QImage::Format_RGB32);

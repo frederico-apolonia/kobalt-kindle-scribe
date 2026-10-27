@@ -13,7 +13,7 @@ QString sleepStatusText(SleepStatus status);
 // A negative estimate is unavailable and has no label.
 QString sleepTimeLeft(qint64 milliseconds);
 // Fits the cover without cropping. Unused space is always black.
-QImage sleepCoverBackground(const QImage &cover, QSize size);
+QImage sleepCoverBackground(const QImage &cover, QSize size, qint64 maxPixels = 4 * 1024 * 1024);
 // The area a tile covers. It does not depend on the status, so a battery
 // update can repaint and refresh only this area.
 QRect sleepScreenCardRect(QSize size, bool showRemaining, sleep::Tile tile = sleep::Tile::Card);

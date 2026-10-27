@@ -729,10 +729,10 @@ void Reader::openScreenRefresh() {
 }
 
 namespace {
-QString sleepLabel(sleep::Mode mode) {
+QString sleepLabel(sleep::Mode mode, const ReaderHostServices &host) {
     switch (mode) {
     case sleep::Mode::Stock:
-        return strings::get("settings.sleep_stock");
+        return host.stockSleepLabel.isEmpty() ? strings::get("settings.sleep_stock") : host.stockSleepLabel;
     case sleep::Mode::Cover:
         return strings::get("settings.sleep_cover");
     case sleep::Mode::Page:
@@ -740,10 +740,11 @@ QString sleepLabel(sleep::Mode mode) {
     }
     return {};
 }
-QString sleepExplanation(sleep::Mode mode) {
+QString sleepExplanation(sleep::Mode mode, const ReaderHostServices &host) {
     switch (mode) {
     case sleep::Mode::Stock:
-        return strings::get("settings.sleep_stock_description");
+        return host.stockSleepLabel.isEmpty() ? strings::get("settings.sleep_stock_description")
+                                              : host.stockSleepDescription;
     case sleep::Mode::Cover:
         return strings::get("settings.sleep_cover_description");
     case sleep::Mode::Page:
@@ -776,7 +777,7 @@ QString sleepTileExplanation(sleep::Tile tile) {
 }
 
 void Reader::showSleepScreen() {
-    sleepScreenButton->setCaption(sleepScreenButton->isEnabled() ? sleepLabel(sleep::mode(preferences)).toUpper()
+    sleepScreenButton->setCaption(sleepScreenButton->isEnabled() ? sleepLabel(sleep::mode(preferences), services).toUpper()
                                                                  : strings::get("settings.unsupported_caption"));
     sleepTileButton->setCaption(sleepTileButton->isEnabled() ? sleepTileLabel(sleep::tile(preferences)).toUpper()
                                                              : strings::get("settings.unsupported_caption"));
@@ -810,7 +811,7 @@ void Reader::openSleepScreen() {
     for (const auto mode : sleep::modes) {
         if (mode == sleep::mode(preferences))
             current = int(options.size());
-        options.append({sleep::value(mode), sleepLabel(mode), sleepExplanation(mode)});
+        options.append({sleep::value(mode), sleepLabel(mode, services), sleepExplanation(mode, services)});
     }
     openSleepChoice("rrSleepScreen", "rrSleep_", strings::get("settings.sleep_screen"), options, current,
                     [this](int index) {

@@ -444,7 +444,7 @@ void Reader::buildToolbar() {
     toolbar->addLayout(top);
     top->setSpacing(m::panel::toolbarGap);
     updateMenuStatus();
-    auto *back = new kobalt::ui::BackButton(strings::get("reader.exit"), topControls);
+    auto *back = new kobalt::ui::BackButton(services.exitLabel.isEmpty() ? strings::get("reader.exit") : services.exitLabel, topControls);
     back->setContentsMargins(0, 0, m::panel::exitLabelExtraRight, 0);
     toolbarComposition.exitAction = back;
     back->setObjectName("rrReturn");
