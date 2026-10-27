@@ -11,7 +11,7 @@ QString sleepStatusText(SleepStatus status);
 // A negative estimate is unavailable and has no label.
 QString sleepTimeLeft(qint64 milliseconds);
 // Fits the cover without cropping. Unused space is always black.
-QImage sleepCoverBackground(const QImage &cover, QSize size);
+QImage sleepCoverBackground(const QImage &cover, QSize size, qint64 maxPixels = 4 * 1024 * 1024);
 QRect sleepScreenCardRect(QSize size, bool showRemaining);
 // Takes ownership of one background and paints in place. The caller
 // releases the completed frame to the host before the device suspends.

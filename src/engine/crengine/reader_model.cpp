@@ -347,7 +347,7 @@ void ReaderModel::setDocumentCache(QString directory, QByteArray fingerprint, QB
     // policies must not survive these renderer changes. The density is fixed by the host
     // before any model opens and is shared by the main reader and previews.
     cachePolicy_ = std::move(policy) +
-                   ":css-density-leading-v1:page-layout-v2:line-height-v2:" + QByteArray::number(readingPpi.load());
+                   ":css-density-leading-v1:page-layout-v2:line-height-v2:" + QByteArray::number(readingPpi.load()) + ":" + QByteArray::number(renderPpi());
     cacheBytes_ = bytes;
 }
 QByteArray ReaderModel::documentCachePolicy() const {
@@ -494,7 +494,7 @@ void ReaderModel::configure(QSize size, const QJsonObject &settings) {
     // CREngine's CSS pixel is 1/96 inch. The reading font and margins already
     // use physical screen pixels, so only CSS lengths and images scale here.
     properties->setInt(PROP_FONT_BASE_WEIGHT, LVRendGetBaseFontWeight());
-    properties->setInt(PROP_RENDER_DPI, readingPpi.load());
+    properties->setInt(PROP_RENDER_DPI, renderPpi());
     properties->setInt(PROP_RENDER_SCALE_FONT_WITH_DPI, 0);
     properties->setString(PROP_FALLBACK_FONT_FACES, lString8(fallbackFontFaces));
     // A saved position is an XPointer, whose form depends on the DOM version.
@@ -853,7 +853,7 @@ void ReaderModel::applyStyleSheet() {
     // A one-screen-pixel boundary stops a leading illustration's margin from
     // collapsing through the body and disappearing at the page boundary.
     // Round upward in the engine's 1/256 CSS-pixel units so every density keeps it.
-    const double boundaryCssPixels = qCeil(256.0 * 96 / readingPpi.load()) / 256.0;
+    const double boundaryCssPixels = qCeil(256.0 * 96 / renderPpi()) / 256.0;
     if (avoidWastefulStyling_) {
         overrides += QString("body[data-kobalt-leading-image=\"1\"] { padding-top:%1px !important; }\n")
                          .arg(boundaryCssPixels, 0, 'f', 6);
