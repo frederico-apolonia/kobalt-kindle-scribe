@@ -32,18 +32,17 @@ public:
     KindleInput(QSize panel, std::function<void(Qt::ScreenOrientation)> orientationChanged);
     ~KindleInput() override;
 
-    // Logical screen turned 180 degrees from the panel: rotate incoming coordinates to match what is drawn.
+    // Rotate incoming coordinates by 180 degrees to match what is drawn (see KindleIntegration::initialize for when).
     void setRotated(bool rotated);
     // Cancel every touch contact and the pen state (rotation, suspend): Qt sees a touch cancel and a pen release,
     // never a stuck press.
     void releaseAll();
-    // The Amazon UI turns the framebuffer itself (rotation 1 or 3) to follow the device, and the display and the
-    // touch panel turn with it. Kobalt starts with whatever turn the UI had, so it only flips what it draws and reads
-    // by 180 degrees when the device's pose and that turn disagree: `baseFlip` is true for rotation 1, which goes with
-    // the device upside down; rotation 3 goes with it upright.
+    // Which way the picture must be flipped for the device's pose depends on how the framebuffer is turned: the
+    // scanout turns with it (see KindleIntegration::initialize). `flip` is true at rotation 1, where the picture is
+    // upright for the device upside down; at rotation 3 it is upright for the device upright.
     void setBaseFlip(bool flip) { baseFlip = flip; }
-    // The orientation to start in: from the accelerometer's present pose and the base flip. KOBALT_KINDLE_ACCEL
-    // (U/D/L/R, as lipc's winmgr reports them) overrides it for tests.
+    // The orientation to start in, from the accelerometer's present pose. KOBALT_KINDLE_ACCEL (U/D/L/R, as lipc's
+    // winmgr reports them) overrides it for tests.
     Qt::ScreenOrientation startingOrientation();
 
 private:

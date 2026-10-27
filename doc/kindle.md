@@ -8,7 +8,7 @@ The port is its own platform under `platforms/kindle/`. It reuses the shared rea
 
 - The Kobalt library (home, list and cover grid, search, sort, folders) and the reader with all of its settings.
 - Touch and the Wacom pen. The pen taps, turns pages, drags and selects text like a finger. Palm contacts are cancelled.
-- Automatic rotation between the two portrait orientations. The Amazon UI turns the framebuffer to follow the device and the display and touch panel turn with it, so Kobalt starts in whatever turn it finds (`/sys/class/graphics/fb0/rotate`, 3 with the device upright, 1 upside down) and flips what it draws and reads only when the accelerometer's pose disagrees with that.
+- Automatic rotation between the two portrait orientations. The Amazon UI turns the framebuffer to follow the device (`/sys/class/graphics/fb0/rotate`: 3 with the device upright, 1 upside down) and the display turns with it, but the touch panel does not. Kobalt flips its picture when the device's pose and that rotation call for it, and flips touch exactly when the device is upside down, so it starts right whichever way the Amazon UI was turned when it was opened.
 - Front light brightness and warmth, in the reader and on the library's Settings page.
 - Battery percentage and charging state, in the reader's menu, in the header and footer fields and in the library's header, next to the clock.
 - A Settings page in the library (the gear in its header) with the front light, dark mode and the sleep screen choices, so none of them needs a book to be open.

@@ -86,7 +86,7 @@ KindleInput::KindleInput(QSize panelSize, std::function<void(Qt::ScreenOrientati
     settle.setSingleShot(true);
     settle.setInterval(700);
     QObject::connect(&settle, &QTimer::timeout, &settle, [this] {
-        // The pose is absolute; what must be flipped is relative to the turn the framebuffer already has.
+        // The pose is absolute; the picture's flip is relative to the turn the framebuffer has.
         const Qt::ScreenOrientation next = (pending == Orientation::PortraitDown) != baseFlip
                                                ? Qt::InvertedPortraitOrientation
                                                : Qt::PortraitOrientation;
@@ -124,10 +124,9 @@ Qt::ScreenOrientation KindleInput::startingOrientation()
         start = code == "D" || code == "R" ? Qt::InvertedPortraitOrientation : Qt::PortraitOrientation;
     } else {
         const Orientation pose = currentPose();
-        // An unreadable pose keeps what the Amazon UI showed.
-        if (pose == Orientation::PortraitUp || pose == Orientation::PortraitDown)
-            start = (pose == Orientation::PortraitDown) != baseFlip ? Qt::InvertedPortraitOrientation
-                                                                   : Qt::PortraitOrientation;
+        // An unreadable pose (the device lying flat) is taken as upright.
+        const bool down = pose == Orientation::PortraitDown;
+        start = down != baseFlip ? Qt::InvertedPortraitOrientation : Qt::PortraitOrientation;
         qInfo("kindlefb input: start-up pose %s, base flip %d -> %s",
               pose == Orientation::PortraitUp     ? "up"
               : pose == Orientation::PortraitDown ? "down"

@@ -307,18 +307,25 @@ KindleIntegration::~KindleIntegration()
 
 // Qt's screen orientation is the one source of truth for pixel and input rotation: whoever turns the QScreen
 // (the application's reader-orientation policy, or the accelerometer when KOBALT_KINDLE_AUTOROTATE=1) makes the
-// plugin mirror the panel output and the pen/touch coordinates together, then repaint with a flashing refresh.
+// plugin mirror the panel output and the pen/touch coordinates, then repaint with a flashing refresh.
+//
+// The Amazon UI turns the framebuffer (`fb0/rotate`: 3 with the device upright, 1 upside down) and the scanout turns
+// with it, so the picture must be flipped when the device is upside down at rotation 3 and when it is upright at
+// rotation 1. The touch controller does not follow: it reports in the device's own frame, so touch is flipped
+// exactly when the device is upside down. Measured on the Scribe: with the picture right for the pose, a flipped
+// touch worked at rotation 3 in both poses, and an unflipped one failed at rotation 1 with the device upside down.
 void KindleIntegration::initialize()
 {
     QScreen *screen = primary->screen();
-    QObject::connect(screen, &QScreen::orientationChanged, screen, [this](Qt::ScreenOrientation orientation) {
+    const bool touchTurned = output.hardwareRotation() == 1;
+    QObject::connect(screen, &QScreen::orientationChanged, screen, [this, touchTurned](Qt::ScreenOrientation orientation) {
         const bool inverted = orientation == Qt::InvertedPortraitOrientation;
         if (!inverted && orientation != Qt::PortraitOrientation)
             qWarning("kindlefb: orientation %d is not supported; staying upright", int(orientation));
         output.setRotated(inverted);
         if (input) {
             input->releaseAll();
-            input->setRotated(inverted);
+            input->setRotated(inverted != touchTurned);
         }
         output.requestFullRefresh();
         for (QWindow *window : QGuiApplication::allWindows()) {
@@ -333,14 +340,12 @@ void KindleIntegration::initialize()
         if (autoRotate)
             QWindowSystemInterface::handleScreenOrientationChange(screen, orientation);
     });
-    // The Amazon UI turns the framebuffer to follow the device, and the display and the touch panel turn with it.
-    // Measured on the Scribe: rotation 3 goes with pose "up" (accelerometer code 15) and rotation 1 with pose "down"
-    // (16). Kobalt flips only what differs from the turn it found.
-    input->setBaseFlip(output.hardwareRotation() == 1);
+    input->setBaseFlip(touchTurned);
     const Qt::ScreenOrientation initial = input->startingOrientation();
-    if (autoRotate && initial == Qt::InvertedPortraitOrientation) {
-        output.setRotated(true);
-        input->setRotated(true);
+    if (autoRotate && (initial == Qt::InvertedPortraitOrientation || touchTurned)) {
+        const bool inverted = initial == Qt::InvertedPortraitOrientation;
+        output.setRotated(inverted);
+        input->setRotated(inverted != touchTurned);
         QWindowSystemInterface::handleScreenOrientationChange(screen, initial);
     }
 
