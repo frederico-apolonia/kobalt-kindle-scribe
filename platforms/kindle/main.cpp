@@ -24,6 +24,11 @@
 #include <QFontDatabase>
 #include <QEvent>
 #include <QLineEdit>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QSslConfiguration>
+#include <QSslSocket>
 #include <QStackedLayout>
 #include <QTimer>
 #include <execinfo.h>
@@ -199,6 +204,25 @@ public:
                 }
             });
         }
+        // Test hook: KOBALT_KINDLE_TLSCHECK=<url> fetches the URL once, logs the TLS library, the CA count, the result and
+        // any certificate errors, then exits.
+        if (const auto url = qEnvironmentVariable("KOBALT_KINDLE_TLSCHECK"); !url.isEmpty())
+            QTimer::singleShot(1500, this, [url] {
+                qInfo() << "tls: supported" << QSslSocket::supportsSsl() << QSslSocket::sslLibraryVersionString()
+                        << "system CAs" << QSslConfiguration::defaultConfiguration().systemCaCertificates().size();
+                auto *network = new QNetworkAccessManager;
+                auto *reply = network->get(QNetworkRequest(QUrl(url)));
+                QObject::connect(reply, &QNetworkReply::sslErrors, reply, [](const QList<QSslError> &errors) {
+                    for (const auto &error : errors)
+                        qInfo() << "tls: certificate error" << error.errorString();
+                });
+                QObject::connect(reply, &QNetworkReply::finished, reply, [reply] {
+                    qInfo() << "tls: finished" << reply->error() << reply->errorString() << "http"
+                            << reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() << "bytes"
+                            << reply->bytesAvailable();
+                    QCoreApplication::exit(0);
+                });
+            });
         // Test hook: KOBALT_KINDLE_CLOSE=<ms> closes the open book that long after start, as the back button does.
         if (const int closeAfter = qEnvironmentVariableIntValue("KOBALT_KINDLE_CLOSE"); closeAfter > 0)
             QTimer::singleShot(closeAfter, this, [this] {

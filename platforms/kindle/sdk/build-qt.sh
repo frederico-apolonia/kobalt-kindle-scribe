@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+# /ossl is the OpenSSL install prefix built for the Kindle (see doc/kindle.md).
 src=/src
 build=/build
 jobs=${JOBS:-2}
@@ -13,6 +14,7 @@ cmake -S "$src" -B "$build/host" -G Ninja \
 cmake --build "$build/host" --target host_tools --parallel "$jobs"
 
 cmake -S "$src" -B "$build/target" -G Ninja \
+  '-UTEST_openssl*' \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$build/install" \
   -DCMAKE_TOOLCHAIN_FILE=/toolchain.cmake -DQT_HOST_PATH="$build/host" \
   -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF \
@@ -23,7 +25,9 @@ cmake -S "$src" -B "$build/target" -G Ninja \
   -DFEATURE_dbus=OFF -DFEATURE_glib=OFF -DFEATURE_icu=OFF -DFEATURE_fontconfig=OFF \
   -DFEATURE_system_zlib=OFF -DFEATURE_system_pcre2=OFF \
   -DFEATURE_system_freetype=OFF -DFEATURE_system_harfbuzz=OFF \
-  -DFEATURE_openssl=OFF -DFEATURE_printsupport=OFF \
+  -DFEATURE_ssl=ON -DFEATURE_openssl=ON -DFEATURE_openssl_linked=ON -DOPENSSL_ROOT_DIR=/ossl \
+  -DOPENSSL_INCLUDE_DIR=/ossl/include -DOPENSSL_SSL_LIBRARY=/ossl/lib/libssl.so \
+  -DOPENSSL_CRYPTO_LIBRARY=/ossl/lib/libcrypto.so -DCMAKE_FIND_ROOT_PATH=/ossl -DFEATURE_printsupport=OFF \
   -DFEATURE_accessibility=ON -DFEATURE_sessionmanager=OFF \
   -DFEATURE_evdev=OFF -DFEATURE_libinput=OFF -DFEATURE_tslib=OFF
 cmake --build "$build/target" --parallel "$jobs"

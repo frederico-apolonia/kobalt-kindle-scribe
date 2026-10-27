@@ -14,9 +14,10 @@ The port is its own platform under `platforms/kindle/`. It reuses the shared rea
 - An on-screen keyboard for the library search and the in-book search, with letters, symbols and accented letters.
 - A sleep screen (book cover, or the dimmed page, with progress and battery) that stays on the panel while the device sleeps.
 - Images keep their proportions and are sized like KOReader's: CSS lengths use 160 ppi (`KOBALT_KINDLE_CSS_DPI`).
+- HTTPS. Qt links OpenSSL 3.5 and trusts the Kindle's own CA bundle (`/etc/ssl/certs/ca-certificates.crt`). A fetch of `github.com`, `example.com` and `letsencrypt.org` succeeds. The KOReader sync client builds with TLS; it has not been tried against a sync server.
 - Starting from the Library (a script entry with a cover), and exiting back to the Amazon UI.
 
-Not available yet, or not supported: dictionaries (the placeholder service only reports that none is installed), HTTPS and so KOReader sync and dictionary downloads (Qt is built without TLS), the browser, page-turn animations, library folder picking (Kobalt reads one folder), and any Kindle other than the Scribe 2022. See [wished features](wished-features.md).
+Not available yet, or not supported: dictionaries (the placeholder service only reports that none is installed, although downloads could now use TLS), the browser, page-turn animations, library folder picking (Kobalt reads one folder), and any Kindle other than the Scribe 2022. See [wished features](wished-features.md).
 
 ## How it fits together
 
@@ -43,23 +44,31 @@ Inputs (paths are yours to choose):
 | `KINDLE_SYSROOT` | The sysroot of the koxtoolchain `kindlehf` release (2026.08 was used): `.../arm-kindlehf-linux-gnueabihf/arm-kindlehf-linux-gnueabihf/sysroot`. |
 | `KINDLE_QT` | An empty directory that `sdk/build-qt.sh` fills with `host/` and `install/`. Qt 6.11.3 (the `qtbase` checkout used is `5a1194b2d368e2d72c230205c464b04a2f23eccd`). |
 | `KINDLE_QTSENSORS` | Install prefix of `qtsensors` 6.11.3, built against that Qt with the same toolchain file and `QT_HOST_PATH=$KINDLE_QT/host`. The reader's orientation code includes `QOrientationSensor`. |
+| `KINDLE_OPENSSL` | OpenSSL 3.5 (an LTS release; 3.5.9 was used) cross-built for the Kindle by `sdk/build-openssl.sh`, installed into this empty directory. Qt links it for TLS. |
 | `KINDLE_FBINK` | A FBInk tree with `Release/libfbink.a` built for the Kindle (revision `13872c0` was used). |
 
-1. Build the builder image: `docker build --platform linux/arm64 -f platforms/kindle/sdk/builder.Dockerfile -t kobalt-kindle-builder platforms/kindle/sdk`.
-2. Build Qt. `sdk/build-qt.sh` expects the Qt source at `/src`, the output at `/build`, the toolchain file at `/toolchain.cmake` and the sysroot at `/kindle-sysroot`:
+1. Build the builder image: `docker build --platform linux/arm64 -f platforms/kindle/sdk/builder.Dockerfile -t kobalt-kindle-builder platforms/kindle/sdk`. The next steps run in it.
+2. Build OpenSSL from an unpacked source tree, which installs into the empty `KINDLE_OPENSSL` directory:
+
+   ```sh
+   KINDLE_SYSROOT=... KINDLE_OPENSSL_SRC=.../openssl-3.5.9 KINDLE_OPENSSL=... platforms/kindle/sdk/build-openssl.sh
+   ```
+
+   Its default certificate store is `/etc/ssl`, where the Kindle keeps its own CA bundle, so no certificates ship with Kobalt.
+3. Build Qt. `sdk/build-qt.sh` expects the Qt source at `/src`, the output at `/build`, OpenSSL at `/ossl`, the toolchain file at `/toolchain.cmake` and the sysroot at `/kindle-sysroot`:
 
    ```sh
    docker run --rm --platform linux/arm64 -e JOBS=4 \
-     -v $QTSRC:/src:ro -v $KINDLE_QT:/build \
+     -v $QTSRC:/src:ro -v $KINDLE_QT:/build -v $KINDLE_OPENSSL:/ossl:ro \
      -v $PWD/platforms/kindle/sdk/toolchain.cmake:/toolchain.cmake:ro \
      -v $PWD/platforms/kindle/sdk/build-qt.sh:/build-qt.sh:ro \
      -v $KINDLE_SYSROOT:/kindle-sysroot:ro \
      kobalt-kindle-builder /build-qt.sh
    ```
 
-   Accessibility must stay on (`-DFEATURE_accessibility=ON`): the shared controls set accessible names. Only the `offscreen` and `minimal` QPA plugins are built; the Kindle uses `kindlefb`. There is no OpenSSL, so HTTPS does not work.
-3. Build `qtsensors` into `KINDLE_QTSENSORS`.
-4. Build FBInk's static library for the Kindle:
+   Accessibility must stay on (`-DFEATURE_accessibility=ON`): the shared controls set accessible names. Qt links OpenSSL (`FEATURE_openssl_linked`) and builds its TLS backend as a plugin, `plugins/tls/libqopensslbackend.so`. Re-running the script over an older build without OpenSSL works: it clears Qt's cached OpenSSL test results. Only the `offscreen` and `minimal` QPA plugins are built; the Kindle uses `kindlefb`.
+4. Build `qtsensors` into `KINDLE_QTSENSORS`.
+5. Build FBInk's static library for the Kindle:
 
    ```sh
    docker run --rm --platform linux/arm64 -v $KINDLE_FBINK:/src -v $KINDLE_SYSROOT:/kindle-sysroot:ro -w /src \
@@ -69,7 +78,7 @@ Inputs (paths are yours to choose):
    ```
 
    FBInk is GPLv3. It is linked into `libqkindlefb.so` and `fbguard` only, and is not vendored in this repository. A binary distribution of those two files is therefore subject to the GPL.
-5. Build Kobalt, from the repository root:
+6. Build Kobalt, from the repository root:
 
    ```sh
    KINDLE_SYSROOT=... KINDLE_QT=... KINDLE_QTSENSORS=... KINDLE_FBINK=... platforms/kindle/sdk/build.sh
@@ -79,7 +88,7 @@ Inputs (paths are yours to choose):
 
    The `kindle` CMake preset in `platforms/kindle/CMakePresets.json` does the same inside an environment that already has the toolchain (`QT_KINDLE_PATH`, `QT_HOST_PATH`, `QT_KINDLE_SENSORS_PATH`, `FBINK_SOURCE`).
 
-The package does not contain Qt. Copy `lib/` (Qt Core, Gui, Widgets, Network, Sql, Sensors, plus the GCC `libstdc++` and `libgcc_s` that match the compiler) and `plugins/sqldrivers/libqsqlite.so` from the Qt install next to it, and add a `qt.conf` that points at them.
+The package does not contain Qt or OpenSSL. Copy `lib/` (Qt Core, Gui, Widgets, Network, Sql, Sensors, `libssl.so.3` and `libcrypto.so.3` from `KINDLE_OPENSSL`, plus the GCC `libstdc++` and `libgcc_s` that match the compiler), `plugins/sqldrivers/libqsqlite.so` and `plugins/tls/libqopensslbackend.so` from the Qt install next to it, and add a `qt.conf` that points at them.
 
 ## Installing
 
@@ -92,6 +101,7 @@ Install under `/mnt/us/kobalt` (user storage, so it survives firmware updates an
   lib/
   plugins/platforms/libqkindlefb.so
   plugins/sqldrivers/libqsqlite.so
+  plugins/tls/libqopensslbackend.so  (and libqcertonlybackend.so)
 ```
 
 Make `kobalt`, `kobalt.sh` and `fbguard` executable. Copy `library-entry.sh` to `/mnt/us/documents/Kobalt.sh`. It is a Library script entry with the same header as KOReader's; it appears in the Library as "Kobalt", with a cover. Tap it to start Kobalt.
@@ -145,6 +155,7 @@ Nothing below touches the display or the Amazon UI. Run `kobalt` directly with `
 | `KOBALT_KINDLE_TYPE=<text>` | Taps the text out on the keyboard, in the library search or, with `KOBALT_KINDLE_OPEN`, the book search. `<shift>`, `<back>`, `<space>`, `<enter>`, `<?123>`, `<abc>`, `<áé>`, `<dismiss>` and `<submit>` name other keys and actions. |
 | `KOBALT_KINDLE_CLOSE=<ms>` | Closes the open book that long after start, as the back button does. |
 | `KOBALT_KINDLE_SLEEP=<ms>[,<ms>]` | Runs the sleep path that long after start, and the wake path at the second time. |
+| `KOBALT_KINDLE_TLSCHECK=<url>` | Fetches the URL once 1.5 seconds after start, logs the TLS library, the number of trusted CAs, the result and any certificate errors, then exits. |
 | `KOBALT_KINDLE_TRACE=1` | Logs touch, mouse and tablet events and the battery reading. |
 | `KOBALT_KINDLE_ACCEL=U\|D` | The orientation at start (upright or upside down). |
 

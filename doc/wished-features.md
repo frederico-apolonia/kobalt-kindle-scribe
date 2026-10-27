@@ -17,9 +17,8 @@ Ideas for the Kindle Scribe port that are not built yet. Nothing here is committ
 ## Platform gaps
 
 - Keyboard layouts for other languages, long-press alternates for accented letters, and a shortcut for the dictionary lookup field.
-- TLS. Qt is built without a TLS backend, so nothing can use HTTPS: the KOReader sync client (it builds, with its TLS
-  diagnostics compiled out, but cannot reach an HTTPS server) and the dictionary downloads. This needs an OpenSSL build
-  for the Kindle (or another Qt TLS backend) in the SDK, and `FEATURE_openssl` on in the Qt build.
-- Dictionaries (StarDict), which depend on the TLS support for their downloads.
+- Dictionaries (StarDict). HTTPS works now, but the dictionary service is still the placeholder in
+  `platforms/kindle/services.cpp`; the downloadable-dictionary service of the other hosts needs porting.
+- KOReader sync against a real sync server. The client builds with TLS but has not been tried on the device.
 - Battery level and clock in the library header (the reader already shows them).
 - Pen and palm-rejection handling.
