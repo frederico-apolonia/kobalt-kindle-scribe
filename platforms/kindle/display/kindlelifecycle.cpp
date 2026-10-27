@@ -87,7 +87,9 @@ void KindleLifecycle::readOutput()
         qInfo("kindlefb lifecycle: %s %d", name.constData(), source);
         if (name == "goingToScreenSaver")
             emit goingToSleep(source);
-        else if (name == "outOfScreenSaver" || name == "wakeupFromSuspend")
+        // wakeupFromSuspend alone is the kernel resuming for a moment (a timer, or the charger being plugged in) and
+        // powerd suspends again; only outOfScreenSaver means someone woke the device.
+        else if (name == "outOfScreenSaver")
             emit wokeUp(source);
     }
     if (pending.size() > 4096)

@@ -18,6 +18,7 @@ export PATH
 UI_FROZEN=0
 AWESOME_STOPPED=0
 VOLUMD_STOPPED=0
+STATUSBAR_STOPPED=0
 SNAPSHOT_READY=0
 LOCKED=0
 DEADMAN_PID=
@@ -41,6 +42,7 @@ thaw_ui() {
     [ "$VOLUMD_STOPPED" -eq 1 ] && killall -CONT volumd
     [ "$AWESOME_STOPPED" -eq 1 ] && killall -CONT awesome
     lipc-set-prop com.lab126.pillow disableEnablePillow enable 2>/dev/null
+    [ "$STATUSBAR_STOPPED" -eq 1 ] && start statusbar >/dev/null 2>&1
     lipc-set-prop com.lab126.appmgrd start app://com.lab126.booklet.home 2>/dev/null
 }
 
@@ -94,12 +96,18 @@ setsid sh -c '
     echo "kobalt deadman: the launcher died without restoring; thawing the Amazon UI" >>"$3"
     killall -CONT volumd; killall -CONT awesome
     lipc-set-prop com.lab126.pillow disableEnablePillow enable
+    [ -f /etc/upstart/statusbar.conf ] && start statusbar
     exit 0
 ' kobalt-deadman "$$" "$DONE" "$LOG" >/dev/null 2>&1 </dev/null &
 DEADMAN_PID=$!
 
 UI_FROZEN=1
 lipc-set-prop com.lab126.pillow disableEnablePillow disable 2>/dev/null
+# The status bar of newer firmware is an upstart job of its own: stopping pillow does not stop it drawing over us
+# (the clock, and the charging and battery icons when the charger is plugged in). KOReader stops it the same way.
+if [ -f /etc/upstart/statusbar.conf ] && stop statusbar >/dev/null 2>&1; then
+    STATUSBAR_STOPPED=1
+fi
 killall -STOP awesome 2>/dev/null && AWESOME_STOPPED=1
 killall -STOP volumd 2>/dev/null && VOLUMD_STOPPED=1
 sleep 1

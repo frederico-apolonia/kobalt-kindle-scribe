@@ -21,7 +21,7 @@ public:
 signals:
     // Button or cover is putting the device to sleep: save, quiesce input. `source` is powerd's code (2 button, 4 hall).
     void goingToSleep(int source);
-    // The screen saver ended or the device resumed: repaint everything with a flashing refresh.
+    // The screen saver ended: repaint everything with a flashing refresh. A brief kernel resume is not a wake.
     void wokeUp(int source);
 
 private:
