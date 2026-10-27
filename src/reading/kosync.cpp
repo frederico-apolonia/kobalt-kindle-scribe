@@ -314,14 +314,12 @@ void Client::sendRequest(const QByteArray &method, const QString &path, const QU
                                   : network_->put(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
     reply_ = reply;
     diagnostic("kosync-request-started", qt::object({{"method", QString::fromLatin1(method)}, {"attempt", attempt}}));
-#if QT_CONFIG(ssl)
     connect(reply, &QNetworkReply::encrypted, this, [] { diagnostic("kosync-tls-connected"); });
     connect(reply, &QNetworkReply::sslErrors, this, [](const QList<QSslError> &errors) {
         QJsonArray codes;
         for (const auto &error : errors) codes.append(int(error.error()));
         diagnostic("kosync-tls-errors", qt::object({{"codes", codes}}));
     });
-#endif
     auto *timeout = new QTimer(reply);
     timeout->setSingleShot(true);
     connect(timeout, &QTimer::timeout, reply, &QNetworkReply::abort);
