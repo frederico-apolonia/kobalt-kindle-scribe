@@ -2,6 +2,8 @@
 
 #include <QtCore/QDebug>
 #include <algorithm>
+#include <csignal>
+#include <unistd.h>
 
 namespace kobalt::kindle {
 namespace {
@@ -32,6 +34,8 @@ Lifecycle::~Lifecycle()
 {
     stopping = true;
     if (process.state() != QProcess::NotRunning) {
+        // lipc-wait-event leaves a second process of its own behind; the group takes both.
+        kill(-pid_t(process.processId()), SIGTERM);
         process.terminate();
         if (!process.waitForFinished(1000)) {
             process.kill();
@@ -42,6 +46,7 @@ Lifecycle::~Lifecycle()
 
 void Lifecycle::start()
 {
+    process.setChildProcessModifier([] { setpgid(0, 0); });
     process.start(QStringLiteral("lipc-wait-event"),
                   {QStringLiteral("-m"), QStringLiteral("com.lab126.powerd"), QString::fromLatin1(kEvents)});
 }

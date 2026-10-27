@@ -25,6 +25,7 @@ LOCKED=0
 mkdir -p "$HOME_DIR" 2>/dev/null
 exec >>"$LOG" 2>&1
 echo "kobalt: start $(date)"
+echo "kobalt: env stack=$(ulimit -s) lang=$LANG ld=$LD_LIBRARY_PATH path=$PATH"
 
 for process in /proc/[0-9]*; do
     command=$(tr '\000' ' ' <"$process/cmdline" 2>/dev/null) || command=
@@ -47,6 +48,12 @@ restore() {
     result=$?
     trap - EXIT HUP INT TERM
     : >"$DONE"
+    # A crashed Kobalt leaves its power-event listeners (and the helper each one forks) running.
+    for process in /proc/[0-9]*; do
+        case "$(tr '\000' ' ' <"$process/cmdline" 2>/dev/null)" in
+            *lipc-wait-event*goingToScreenSaver*) kill "${process#/proc/}" 2>/dev/null ;;
+        esac
+    done
     if [ "$SNAPSHOT_READY" -eq 1 ]; then
         "$APP/fbguard" restore "$SNAPSHOT" || echo "kobalt: framebuffer restore failed"
         rm -f "$SNAPSHOT"

@@ -21,7 +21,12 @@
 #include <QEvent>
 #include <QStackedLayout>
 #include <QTimer>
+#include <execinfo.h>
+#include <csignal>
+#include <cstdio>
+#include <cstring>
 #include <memory>
+#include <unistd.h>
 #include <utility>
 
 using namespace kobalt;
@@ -210,8 +215,37 @@ private:
     }
 };
 }
+// A crash on the device leaves nothing but an exit code. Print the faulting address and the raw stack, with the
+// module map so the frames can be resolved against the unstripped build. Runs on its own stack so an overflow reports too.
+static void crashHandler(int signal, siginfo_t *info, void *) {
+    char head[96];
+    const int length = snprintf(head, sizeof head, "kobalt: fatal signal %d at %p\n", signal, info->si_addr);
+    if (length > 0)
+        (void)!write(2, head, size_t(length));
+    void *frames[48];
+    backtrace_symbols_fd(frames, backtrace(frames, 48), 2);
+    FILE *maps = fopen("/proc/self/maps", "r");
+    char line[256];
+    while (maps && fgets(line, sizeof line, maps))
+        if (strstr(line, "kobalt") || strstr(line, "lib"))
+            (void)!write(2, line, strlen(line));
+    _exit(128 + signal);
+}
+static void installCrashHandler() {
+    static char stack[64 * 1024];
+    stack_t alternate{stack, 0, sizeof stack};
+    sigaltstack(&alternate, nullptr);
+    struct sigaction action {};
+    action.sa_sigaction = crashHandler;
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&action.sa_mask);
+    for (const int signal : {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT})
+        sigaction(signal, &action, nullptr);
+}
+
 int main(int argc, char **argv) {
     FontCopies copies;
+    installCrashHandler();
     QApplication app(argc, argv);
     app.setApplicationName("Kobalt");
     app.setOrganizationName("Kobalt");
