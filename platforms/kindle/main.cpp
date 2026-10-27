@@ -163,6 +163,12 @@ public:
         connect(&lifecycle, &kindle::Lifecycle::goingToSleep, this, [this](int) { enterSleep(); });
         connect(&lifecycle, &kindle::Lifecycle::wokeUp, this, [this](int) { leaveSleep(); });
         connect(&lifecycle, &kindle::Lifecycle::resumed, this, [this](int) { refreshSleepBattery(); });
+        // The gauge needs a moment to follow the charger, and a loose cable can plug and unplug several times.
+        auto *chargerSettled = new QTimer(this);
+        chargerSettled->setSingleShot(true);
+        chargerSettled->setInterval(1500);
+        connect(chargerSettled, &QTimer::timeout, this, [this] { refreshSleepBattery(); });
+        connect(&lifecycle, &kindle::Lifecycle::chargerChanged, chargerSettled, [chargerSettled] { chargerSettled->start(); });
         connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
             if (state != Qt::ApplicationActive && controller.window())
                 controller.window()->checkpoint();

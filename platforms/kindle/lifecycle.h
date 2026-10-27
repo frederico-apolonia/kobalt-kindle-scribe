@@ -26,6 +26,9 @@ signals:
     // The kernel resumed for a moment, for a timer or because the charger was plugged in, and powerd will suspend
     // again. The screen saver is still up: only things that belong on it, such as the battery, may change.
     void resumed(int source);
+    // The charger was plugged in or removed. The device stays awake while charging, so this is also how a sleep screen
+    // learns of it.
+    void chargerChanged();
 
 private:
     void start();

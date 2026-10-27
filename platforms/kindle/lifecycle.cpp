@@ -7,7 +7,8 @@
 
 namespace kobalt::kindle {
 namespace {
-constexpr const char *kEvents = "goingToScreenSaver,outOfScreenSaver,wakeupFromSuspend,readyToSuspend";
+constexpr const char *kEvents =
+    "goingToScreenSaver,outOfScreenSaver,wakeupFromSuspend,readyToSuspend,charging,notCharging";
 }
 
 Lifecycle::Lifecycle(QObject *parent) : QObject(parent)
@@ -56,7 +57,8 @@ bool Lifecycle::parse(const QByteArray &line, QByteArray *name, int *source)
     const QList<QByteArray> parts = line.simplified().split(' ');
     if (parts.isEmpty())
         return false;
-    static const char *known[] = {"goingToScreenSaver", "outOfScreenSaver", "wakeupFromSuspend", "readyToSuspend"};
+    static const char *known[] = {"goingToScreenSaver", "outOfScreenSaver", "wakeupFromSuspend", "readyToSuspend",
+                                  "charging",           "notCharging"};
     if (std::none_of(std::begin(known), std::end(known), [&](const char *k) { return parts[0] == k; }))
         return false;
     bool ok = true;
@@ -89,6 +91,8 @@ void Lifecycle::readOutput()
             emit wokeUp(source);
         else if (name == "wakeupFromSuspend")
             emit resumed(source);
+        else if (name == "charging" || name == "notCharging")
+            emit chargerChanged();
     }
     if (pending.size() > 4096)
         pending.clear();
