@@ -179,9 +179,15 @@ if(APPLE)
     file(MAKE_DIRECTORY "${prefix}/lib/pkgconfig")
     file(CONFIGURE OUTPUT "${prefix}/lib/pkgconfig/libpng.pc" CONTENT
         "Name: libpng\nDescription: libpng from the installed Qt SDK\nVersion: ${png_version}\nLibs: ${png} -lz\nCflags: -I${png_include}\n" @ONLY)
-elseif(ANDROID)
+elseif(ANDROID OR KOBALT_KINDLE)
     kobalt_source(libpng)
-    kobalt_library(libpng ARCHIVE libpng16.a OPTIONS -DPNG_SHARED=OFF -DPNG_STATIC=ON
+    if(KOBALT_KINDLE)
+        # The Kindle sysroot ships no zlib and Qt keeps its own copy private.
+        kobalt_source(zlib)
+        kobalt_library(zlib ARCHIVE libz.a OPTIONS -DZLIB_BUILD_EXAMPLES=OFF)
+        set(zlib_dependency dep-zlib)
+    endif()
+    kobalt_library(libpng ARCHIVE libpng16.a DEPENDS ${zlib_dependency} OPTIONS -DPNG_SHARED=OFF -DPNG_STATIC=ON
         -DPNG_TESTS=OFF -DPNG_TOOLS=OFF)
     set(png "${prefix}/lib/libpng16.a")
     set(png_include "${prefix}/include")
@@ -195,8 +201,10 @@ else()
     file(CONFIGURE OUTPUT "${prefix}/lib/pkgconfig/libpng.pc" CONTENT
         "Name: libpng\nDescription: libpng from the prepared SDK\nVersion: ${PNG_VERSION_STRING}\nLibs: ${png} -lz\nCflags: -I${png_include}\n" @ONLY)
 endif()
-file(CONFIGURE OUTPUT "${prefix}/lib/pkgconfig/zlib.pc" CONTENT "Name: zlib\nDescription: SDK zlib\nVersion: 1\nLibs: -lz\n" @ONLY)
-kobalt_library(freetype ARCHIVE libfreetype.a DEPENDS ${png_dependency} OPTIONS -DFT_DISABLE_HARFBUZZ=ON -DFT_DISABLE_BZIP2=ON
+if(NOT KOBALT_KINDLE)
+    file(CONFIGURE OUTPUT "${prefix}/lib/pkgconfig/zlib.pc" CONTENT "Name: zlib\nDescription: SDK zlib\nVersion: 1\nLibs: -lz\n" @ONLY)
+endif()
+kobalt_library(freetype ARCHIVE libfreetype.a DEPENDS ${png_dependency} ${zlib_dependency} OPTIONS -DFT_DISABLE_HARFBUZZ=ON -DFT_DISABLE_BZIP2=ON
     -DFT_DISABLE_BROTLI=ON -DFT_DISABLE_HVF=ON -DFT_DISABLE_PNG=OFF "-DPNG_LIBRARY=${png}" "-DPNG_PNG_INCLUDE_DIR=${png_include}")
 kobalt_library(harfbuzz ARCHIVE libharfbuzz.a DEPENDS dep-freetype OPTIONS -DHB_BUILD_UTILS=OFF
     -DHB_BUILD_SUBSET=OFF -DHB_BUILD_RASTER=OFF -DHB_BUILD_VECTOR=OFF -DHB_BUILD_GPU=OFF -DHB_HAVE_FREETYPE=ON)
@@ -208,7 +216,7 @@ kobalt_library(xxhash ARCHIVE libxxhash.a SUFFIX /cmake_unofficial OPTIONS -DXXH
 kobalt_library(libunibreak AUTOTOOLS ARCHIVE libunibreak.a)
 kobalt_library(lunasvg ARCHIVE liblunasvg.a OPTIONS "-DXTENDED_DIR=${svg_patches}/xtended" -DLUNASVG_BUILD_EXAMPLES=OFF)
 kobalt_library(crengine NO_INSTALL ARCHIVE libcrengine.a DEPENDS dep-freetype dep-harfbuzz dep-fribidi
-    dep-utf8proc dep-libjpeg-turbo dep-xxhash dep-libunibreak dep-lunasvg OPTIONS
+    dep-utf8proc dep-libjpeg-turbo dep-xxhash dep-libunibreak dep-lunasvg ${zlib_dependency} OPTIONS
     -DAUTO=OFF -DFREETYPE=ON -DHARFBUZZ=ON -DLIBPNG=ON -DLIBJPEG=ON -DGIF=ON -DLUNASVG=ON
     -DZLIB=ON -DUTF8PROC=ON -DFRIBIDI=ON -DLIBUNIBREAK=ON -DMATHML=ON)
 if(ANDROID)

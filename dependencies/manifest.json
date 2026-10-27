@@ -62,5 +62,10 @@
   "hiddenapibypass": {
     "url": "https://repo.maven.apache.org/maven2/org/lsposed/hiddenapibypass/hiddenapibypass/4.3/hiddenapibypass-4.3.aar",
     "sha256": "e9c2b90785b8c0d49aaa5f723a83d8c51d9789cd4f2b1ecf6e3335e6fc561201"
+  },
+  "zlib": {
+    "url": "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz",
+    "sha256": "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+    "directory": "zlib-1.3.1"
   }
 }
