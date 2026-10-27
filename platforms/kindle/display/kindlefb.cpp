@@ -421,7 +421,15 @@ void KindleBackingStore::flush(QWindow *window, const QRegion &region, const QPo
         window->setProperty("kindlefb_full_refresh", false);
         framebuffer.requestFullRefresh();
     }
+    // A sleep screen update (the battery changed while the device sleeps) is let through the paused output once.
+    const bool sleepUpdate = window->property("kindlefb_sleep_update").toBool();
+    if (sleepUpdate) {
+        window->setProperty("kindlefb_sleep_update", false);
+        framebuffer.setPaused(false);
+    }
     framebuffer.present(image, region, window->geometry().topLeft(), offset);
+    if (sleepUpdate)
+        framebuffer.setPaused(true);
     if (window->property("kindlefb_sleep_ready").toBool()) {
         window->setProperty("kindlefb_sleep_ready", false);
         KindleIntegration::instance()->sleepFrameSubmitted();

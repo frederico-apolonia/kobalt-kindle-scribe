@@ -38,7 +38,7 @@ bool SleepScreen::refresh(const QImage &next, const QRect &damage)
     if (!isVisible() || next.isNull())
         return false;
     image = next;
-    submit(damage);
+    submit(damage, true);
     return true;
 }
 
@@ -99,13 +99,16 @@ QImage SleepScreen::libraryPicture(QSize size, const BatteryStatus &battery, sle
                                     false, tile);
 }
 
-void SleepScreen::submit(const QRegion &region)
+void SleepScreen::submit(const QRegion &region, bool update)
 {
     // Asks the display plugin for a flashing refresh and tells it this frame is the sleep picture, after which it
-    // pauses its output instead of waiting out its safety delay.
+    // pauses its output instead of waiting out its safety delay. An update is let through although the output is
+    // already paused for the night, and the plugin pauses it again afterwards.
     if (auto *handle = window()->windowHandle()) {
         handle->setProperty("kindlefb_full_refresh", true);
         handle->setProperty("kindlefb_sleep_ready", true);
+        if (update)
+            handle->setProperty("kindlefb_sleep_update", true);
     }
     repaint(region);
 }

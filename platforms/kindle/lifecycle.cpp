@@ -81,12 +81,14 @@ void Lifecycle::readOutput()
         if (!parse(line, &name, &source))
             continue;
         qInfo("kindle lifecycle: %s %d", name.constData(), source);
-        if (name == "goingToScreenSaver")
-            emit goingToSleep(source);
         // wakeupFromSuspend alone is the kernel resuming for a moment (a timer, or the charger being plugged in) and
         // powerd suspends again; only outOfScreenSaver means someone woke the device.
+        if (name == "goingToScreenSaver")
+            emit goingToSleep(source);
         else if (name == "outOfScreenSaver")
             emit wokeUp(source);
+        else if (name == "wakeupFromSuspend")
+            emit resumed(source);
     }
     if (pending.size() > 4096)
         pending.clear();

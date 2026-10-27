@@ -13,7 +13,8 @@ public:
     SleepScreen(QWidget *host, QString snapshotPath);
     // Covers the host with `image` and submits it to the panel at once. False if there is no image.
     bool present(const QImage &image);
-    // Redraws part of the image already shown (the battery in its card). Never shows a hidden screen.
+    // Redraws part of the image already shown (the battery in its card), also while the device sleeps: the display
+    // plugin lets that one frame through. Never shows a hidden screen.
     bool refresh(const QImage &image, const QRect &damage);
     // Removes the picture. The next frame is a full, flashing refresh, so the sleep image leaves no ghost.
     void clear();
@@ -34,6 +35,6 @@ private:
     QImage image;
     QString snapshotPath;
     sleep::Snapshot last;
-    void submit(const QRegion &region);
+    void submit(const QRegion &region, bool update = false);
 };
 }

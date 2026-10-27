@@ -23,6 +23,9 @@ signals:
     void goingToSleep(int source);
     // The screen saver ended: repaint everything with a flashing refresh. A brief kernel resume is not a wake.
     void wokeUp(int source);
+    // The kernel resumed for a moment, for a timer or because the charger was plugged in, and powerd will suspend
+    // again. The screen saver is still up: only things that belong on it, such as the battery, may change.
+    void resumed(int source);
 
 private:
     void start();

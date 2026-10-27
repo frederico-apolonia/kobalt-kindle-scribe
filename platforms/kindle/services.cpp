@@ -11,6 +11,7 @@
 #include <QLineEdit>
 #include <QPointer>
 #include <QTime>
+#include <vector>
 #include <algorithm>
 #include <cmath>
 
@@ -217,6 +218,29 @@ private:
     QPointer<SleepScreen> sleep;
 };
 }
+namespace {
+// What the readers asked to hear about when the battery changes. Nothing runs while the device is suspended, so
+// the window announces a change when the kernel resumes (see notifyBatteryObservers).
+struct BatteryObserver {
+    QPointer<QObject> context;
+    std::function<void()> changed;
+};
+std::vector<BatteryObserver> &batteryObservers() {
+    static std::vector<BatteryObserver> observers;
+    return observers;
+}
+}
+void notifyBatteryObservers() {
+    auto &observers = batteryObservers();
+    observers.erase(std::remove_if(observers.begin(), observers.end(),
+                                   [](const BatteryObserver &observer) { return observer.context.isNull(); }),
+                    observers.end());
+    // A callback may open or close readers, which register or end observers.
+    const auto current = observers;
+    for (const auto &observer : current)
+        if (observer.context && observer.changed)
+            observer.changed();
+}
 BatteryStatus batteryStatus() {
     return readBattery();
 }
@@ -241,6 +265,9 @@ ReaderHostServices readerServices(std::shared_ptr<LightDevice> light, const Host
     };
     result.battery = [] {
         return readBattery();
+    };
+    result.observeBattery = [](QObject *context, std::function<void()> changed) {
+        batteryObservers().push_back({context, std::move(changed)});
     };
     result.pageButtons = [] {
         return false;

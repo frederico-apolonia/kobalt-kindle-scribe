@@ -13,7 +13,7 @@ The port is its own platform under `platforms/kindle/`. It reuses the shared rea
 - Battery percentage and charging state, in the reader's menu, in the header and footer fields and in the library's header, next to the clock.
 - A Settings page in the library (the gear in its header) with the front light, dark mode and the sleep screen choices, so none of them needs a book to be open.
 - An on-screen keyboard for the library search and the in-book search, with letters, symbols and accented letters.
-- A sleep screen (book cover, or the dimmed page, with progress and battery) that stays on the panel while the device sleeps.
+- A sleep screen (book cover, or the dimmed page, with progress and battery) that stays on the panel while the device sleeps. Plugging the charger in or out while it sleeps redraws its status tile (Charging, the level, or Charged).
 - Images keep their proportions and are sized like KOReader's: CSS lengths use 160 ppi (`KOBALT_KINDLE_CSS_DPI`).
 - HTTPS. Qt links OpenSSL 3.5 and trusts the Kindle's own CA bundle (`/etc/ssl/certs/ca-certificates.crt`). A fetch of `github.com`, `example.com` and `letsencrypt.org` succeeds. The KOReader sync client builds with TLS; it has not been tried against a sync server.
 - Starting from the Library (a script entry with a cover), and exiting back to the Amazon UI.

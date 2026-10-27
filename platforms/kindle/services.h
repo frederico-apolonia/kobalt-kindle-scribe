@@ -15,4 +15,6 @@ struct HostWidgets {
 ReaderHostServices readerServices(std::shared_ptr<LightDevice> light, const HostWidgets &widgets);
 // The battery gauge and the chargers, as the reader's menu and the sleep screens show them.
 BatteryStatus batteryStatus();
+// Tells every reader that asked (observeBattery) to look at the battery again.
+void notifyBatteryObservers();
 }

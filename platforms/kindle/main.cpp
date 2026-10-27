@@ -162,6 +162,7 @@ public:
         });
         connect(&lifecycle, &kindle::Lifecycle::goingToSleep, this, [this](int) { enterSleep(); });
         connect(&lifecycle, &kindle::Lifecycle::wokeUp, this, [this](int) { leaveSleep(); });
+        connect(&lifecycle, &kindle::Lifecycle::resumed, this, [this](int) { refreshSleepBattery(); });
         connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
             if (state != Qt::ApplicationActive && controller.window())
                 controller.window()->checkpoint();
@@ -271,6 +272,8 @@ private:
     android::WidgetCanvas *canvas;
     QString openedKey;
     bool closing = false, failed = false, layoutRepairPending = false, asleep = false;
+    // The battery state the library's sleep screen shows.
+    BatteryStatus sleepBattery;
     // One preference in the file that every book's settings share. The rest of the file stays as it was.
     void savePreference(const QString &key, const QJsonValue &value) {
         const auto path = storage::Paths{homeFolder() + "/state/config"}.preferences();
@@ -348,6 +351,25 @@ private:
         const auto area = contentsRect().size();
         return {qRound(area.width() * devicePixelRatioF()), qRound(area.height() * devicePixelRatioF())};
     }
+    // The kernel resumed for a moment while the sleep screen is up, for a timer or because the charger was plugged in
+    // or removed. The screen saver stays, but its battery status must follow: charging shows the level.
+    void refreshSleepBattery() {
+        if (!asleep)
+            return;
+        if (controller.window()) {
+            kindle::notifyBatteryObservers();
+            return;
+        }
+        const auto battery = kindle::batteryStatus();
+        const bool charging = battery.charging || battery.fullyCharged;
+        if (battery.charging == sleepBattery.charging && battery.fullyCharged == sleepBattery.fullyCharged &&
+            (!charging || battery.percent == sleepBattery.percent))
+            return;
+        sleepBattery = battery;
+        const auto preferences = controller.preferences();
+        sleepScreen->refresh(sleepScreen->libraryPicture(size(), battery, sleep::mode(preferences), sleep::tile(preferences)),
+                             rect());
+    }
     // The reader saves its place and builds its sleep image (cover or dimmed page, with progress and battery), then
     // hands the screen to it. The first choice, or any state the reader will not capture (a dialog open, a preview),
     // leaves the page as it is.
@@ -359,10 +381,12 @@ private:
             // No book open: the library is showing. Opening or closing a book leaves the screen as it is.
             const auto preferences = controller.preferences();
             const auto mode = sleep::mode(preferences);
+            const auto battery = kindle::batteryStatus();
             if (mode != sleep::Mode::Stock && start->isVisible() && !closing &&
-                sleepScreen->present(sleepScreen->libraryPicture(size(), kindle::batteryStatus(), mode,
-                                                                 sleep::tile(preferences))))
+                sleepScreen->present(sleepScreen->libraryPicture(size(), battery, mode, sleep::tile(preferences)))) {
+                sleepBattery = battery;
                 asleep = true;
+            }
             return;
         }
         const auto mode = sleep::mode(controller.preferences());
