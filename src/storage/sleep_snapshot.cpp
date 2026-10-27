@@ -10,7 +10,8 @@
 
 namespace kobalt::storage {
 namespace {
-constexpr qint64 maxPixels = 4 * 1024 * 1024;
+// The Kindle Scribe's page is 4.6 million pixels; no supported screen is above 8.
+constexpr qint64 maxPixels = 8 * 1024 * 1024;
 constexpr qint64 maxBytes = 20 * 1024 * 1024;
 bool validSize(QSize size) {
     return size.width() > 0 && size.height() > 0 && qint64(size.width()) * size.height() <= maxPixels;
