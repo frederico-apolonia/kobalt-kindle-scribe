@@ -565,10 +565,11 @@ public:
         openBook = row("libraryMoreOpenBook", strings::get("library.open_book"), ui::ControlIcon::Dictionary, {});
         folders = row("libraryMoreFolders", strings::get("library.folders"), ui::ControlIcon::Folders,
                       ui::ListRow::Chevron{});
+        leave = row("libraryMoreExit", strings::get("library.exit"), ui::ControlIcon::Close, {});
         setDimmed(true);
         setProperty("reader_standard_modal", true);
     }
-    ui::ListRow *addFolder, *openBook, *folders;
+    ui::ListRow *addFolder, *openBook, *folders, *leave;
 };
 
 // The folders the library scans, with the controls to add, remove and rescan.
@@ -1228,8 +1229,16 @@ void LibraryView::showMoreSheet() {
             closeOverlay();
             showFolders();
         });
+        connect(moreSheet->leave, &QPushButton::clicked, this, [this] {
+            closeOverlay();
+            if (exitApp)
+                QTimer::singleShot(0, this, exitApp);
+        });
         setDark(dark);
     }
+    moreSheet->addFolder->setVisible(bool(addFolder));
+    moreSheet->openBook->setVisible(bool(openFile));
+    moreSheet->leave->setVisible(bool(exitApp));
     moreSheet->setGeometry(rect());
     moreSheet->fitCard();
     moreSheet->show();
