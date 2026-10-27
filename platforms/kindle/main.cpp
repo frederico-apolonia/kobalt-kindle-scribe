@@ -1,6 +1,7 @@
 #include "../android/canvas.h"
 #include "../android/reader.h"
 #include "../android/start_screen.h"
+#include "keyboard.h"
 #include "lifecycle.h"
 #include "light_device.h"
 #include "services.h"
@@ -12,6 +13,7 @@
 #include "reading/reading_density.h"
 #include "storage/reader_storage.h"
 #include "support/diagnostics.h"
+#include <QAbstractButton>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDebug>
@@ -19,6 +21,7 @@
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QEvent>
+#include <QLineEdit>
 #include <QStackedLayout>
 #include <QTimer>
 #include <execinfo.h>
@@ -69,7 +72,7 @@ class Window : public QWidget {
 public:
     Window(EngineFontInputs fonts, QString placeholder, std::shared_ptr<kindle::LightDevice> light)
         : controller(storage::Paths{homeFolder() + "/state/config"}, std::move(fonts), std::move(placeholder),
-                     [light] { return kindle::readerServices(light); }, [](Qt::ScreenOrientation) {}),
+                     [this, light] { return kindle::readerServices(light, keyboard); }, [](Qt::ScreenOrientation) {}),
           store(homeFolder() + "/state/config", std::make_shared<library::LocalSource>()) {
         setWindowTitle("Kobalt");
         QPalette colors;
@@ -81,7 +84,7 @@ public:
         setAutoFillBackground(true);
         layout = new QStackedLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
-        start = new android::StartScreen(kindle::readerServices(light).presentation, store);
+        start = new android::StartScreen(kindle::readerServices(light, nullptr).presentation, store);
         start->setDark(controller.preferences().value("dark_mode").toBool(false));
         // No document pickers on the Kindle, and no back key: the library's More sheet offers Exit.
         start->setHostActions(false, true);
@@ -89,6 +92,15 @@ public:
         layout->addWidget(start);
         layout->addWidget(canvas);
         canvas->viewportResized = [this] { canvas->fitContent(); };
+        if (qEnvironmentVariableIntValue("KOBALT_KINDLE_TRACE")) {
+            const auto battery = kindle::readerServices(light, nullptr).battery();
+            qInfo() << "kindle battery" << battery.percent << "charging" << battery.charging << "full" << battery.fullyCharged;
+        }
+        // There is no system keyboard: dock Kobalt's own while a text field, in the library or a reader, has focus.
+        // The fields live inside graphics scenes, where the application's focus widget is the view, not the field,
+        // so the field's own focus events are the signal.
+        keyboard = new kindle::OnScreenKeyboard(this);
+        qApp->installEventFilter(this);
         connect(start, &android::StartScreen::bookRequested, this, &Window::openBook);
         connect(start, &android::StartScreen::exitRequested, this, &QWidget::close);
         connect(start, &android::StartScreen::markUnreadRequested, this, [this](const QString &key) {
@@ -150,12 +162,46 @@ public:
                 store.scan();
         });
         // Test hook: open a book without touch input, after the window has settled.
+        // Test hook: KOBALT_KINDLE_TYPE taps text out on the keyboard, in the library search or, with
+        // KOBALT_KINDLE_OPEN, in the book's search. "<shift>", "<back>", "<space>", "<enter>", "?123" and "abc"
+        // in angle brackets name the other keys.
+        const auto typed = qEnvironmentVariable("KOBALT_KINDLE_TYPE");
+        if (!typed.isEmpty()) {
+            const bool inBook = !qEnvironmentVariableIsEmpty("KOBALT_KINDLE_OPEN");
+            const char *opener = inBook ? "rrSearchOpen" : "librarySearch";
+            // The library and the reader are drawn inside canvases, so they are not among the window's children.
+            QTimer::singleShot(inBook ? 12000 : 3000, this, [opener] {
+                for (auto *widget : QApplication::allWidgets())
+                    if (widget->objectName() == opener)
+                        static_cast<QAbstractButton *>(widget)->click();
+            });
+            QTimer::singleShot(inBook ? 14000 : 5000, this, [this, typed] {
+                for (qsizetype i = 0; i < typed.size(); ++i) {
+                    QString label(typed[i]);
+                    if (typed[i] == '<' && typed.indexOf('>', i) > i) {
+                        label = typed.mid(i, typed.indexOf('>', i) - i + 1);
+                        i += label.size() - 1;
+                    }
+                    if (label == "<dismiss>") {
+                        keyboard->dismiss();
+                    } else if (label == "<submit>") {
+                        for (auto *widget : QApplication::allWidgets())
+                            if (widget->objectName() == "rrSearchSubmit")
+                                static_cast<QAbstractButton *>(widget)->click();
+                    } else if (!keyboard->tap(label)) {
+                        qWarning() << "KOBALT_KINDLE_TYPE: no key" << label;
+                    }
+                }
+            });
+        }
         const auto autoOpen = qEnvironmentVariable("KOBALT_KINDLE_OPEN");
         if (!autoOpen.isEmpty())
             QTimer::singleShot(3000, this, [this, autoOpen] { openBook(autoOpen); });
     }
 
 private:
+    // Declared first: the reader's services are built from it, and a reader may be opened at any time.
+    kindle::OnScreenKeyboard *keyboard = nullptr;
     android::ReaderController controller;
     library::Store store;
     kindle::Lifecycle lifecycle;
@@ -163,7 +209,7 @@ private:
     android::StartScreen *start;
     android::WidgetCanvas *canvas;
     QString openedKey;
-    bool closing = false, failed = false;
+    bool closing = false, failed = false, layoutRepairPending = false;
     QSize pixels() const {
         if (canvas->isVisible())
             return canvas->pixelSize();
@@ -190,6 +236,42 @@ private:
         start->showOpening();
         layout->setCurrentWidget(start);
         controller.open(path, pixels());
+    }
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if (event->type() == QEvent::FocusIn) {
+            auto *edit = qobject_cast<QLineEdit *>(watched);
+            if (edit && !edit->isReadOnly()) {
+                keyboard->submitted = {};
+                keyboard->attach(edit);
+            }
+        } else if (event->type() == QEvent::FocusOut && watched == keyboard->target()) {
+            keyboard->dismiss();
+        }
+        auto *reader = controller.window();
+        if (reader && (event->type() == QEvent::Resize || event->type() == QEvent::Show)) {
+            auto *widget = qobject_cast<QWidget *>(watched);
+            if (widget && (widget == reader || reader->isAncestorOf(widget)) && !layoutRepairPending) {
+                layoutRepairPending = true;
+                QTimer::singleShot(0, this, [this] {
+                    layoutRepairPending = false;
+                    auto *reader = controller.window();
+                    if (!reader)
+                        return;
+                    // Proxy resize can leave newly created children with an inherited disabled-update flag, which
+                    // keeps them from ever painting (search results showed only their last row). Explicit disables stay.
+                    for (auto *child : reader->findChildren<QWidget *>())
+                        if (!child->updatesEnabled() && !child->testAttribute(Qt::WA_ForceUpdatesDisabled) &&
+                            child->parentWidget() && child->parentWidget()->updatesEnabled())
+                            child->setUpdatesEnabled(true);
+                });
+            }
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+    void resizeEvent(QResizeEvent *event) override {
+        QWidget::resizeEvent(event);
+        if (keyboard && keyboard->isVisible())
+            keyboard->place();
     }
     void closeEvent(QCloseEvent *event) override {
         if (closing && controller.idle()) {

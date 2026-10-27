@@ -4,6 +4,8 @@
 
 namespace kobalt::kindle {
 class LightDevice;
+class OnScreenKeyboard;
 // `light` is the one front-light device of the process; it outlives every reader window.
-ReaderHostServices readerServices(std::shared_ptr<LightDevice> light);
+// `keyboard` is the window's on-screen keyboard, likewise owned by the window.
+ReaderHostServices readerServices(std::shared_ptr<LightDevice> light, OnScreenKeyboard *keyboard);
 }

@@ -16,7 +16,7 @@ Ideas for the Kindle Scribe port that are not built yet. Nothing here is committ
 
 ## Platform gaps
 
-- On-screen keyboard for search and dictionary lookups.
+- Keyboard layouts for other languages, long-press alternates for accented letters, and a shortcut for the dictionary lookup field.
 - Dictionaries (StarDict) and the TLS support their downloads need.
-- Battery level and clock in the reader footer.
+- Battery level and clock in the library header (the reader already shows them).
 - Pen and palm-rejection handling.

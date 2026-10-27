@@ -1,6 +1,9 @@
 #include "services.h"
 #include "interfaces/reader/ui/style/fonts.h"
+#include "keyboard.h"
 #include "light_device.h"
+#include <QDir>
+#include <QFile>
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QLineEdit>
@@ -106,21 +109,72 @@ public:
         return result;
     }
 };
-// Text entry waits for an on-screen keyboard; the editor only receives focus.
+// The gauge and the chargers are listed under /sys/class/power_supply. A battery that reports a capacity gives the
+// percentage; any mains or USB supply that is online means the device is charging.
+BatteryStatus readBattery() {
+    const QDir root(QStringLiteral("/sys/class/power_supply"));
+    BatteryStatus result;
+    bool plugged = false;
+    for (const QString &name : root.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const auto value = [&](const char *file) {
+            QFile data(root.filePath(name + QLatin1Char('/') + QLatin1String(file)));
+            return data.open(QIODevice::ReadOnly) ? QString::fromLatin1(data.readAll()).trimmed() : QString();
+        };
+        const QString type = value("type");
+        if (type == QLatin1String("Battery") && result.percent < 0) {
+            bool ok = false;
+            const int capacity = value("capacity").toInt(&ok);
+            if (!ok)
+                continue;
+            const QString status = value("status");
+            result.percent = std::clamp(capacity, 0, 100);
+            result.charging = status == QLatin1String("Charging");
+            result.fullyCharged = status == QLatin1String("Full");
+        } else if (type == QLatin1String("Mains") || type == QLatin1String("USB")) {
+            plugged = plugged || value("online") == QLatin1String("1");
+        }
+    }
+    if (plugged && result.percent >= 0 && !result.fullyCharged)
+        result.charging = true;
+    return result;
+}
+// The search panel's keyboard: the window's on-screen keyboard, which the window docks above everything else. The
+// panel sits in a scaled canvas, so the keyboard stays outside it, in window pixels.
 class Keyboard final : public KeyboardController {
 public:
-    explicit Keyboard(QLineEdit *editor) : editor(editor) {}
+    Keyboard(OnScreenKeyboard *dock, QLineEdit *editor) : dock(dock), editor(editor) {}
+    ~Keyboard() override {
+        release();
+    }
     bool show() override {
-        if (!editor)
+        if (!editor || !dock)
             return false;
+        // Focusing the editor docks the keyboard for it and drops any earlier Enter handler.
         editor->setFocus();
+        dock->submitted = [this] {
+            if (submitted)
+                submitted();
+        };
+        dock->attach(editor);
         return true;
     }
-    void hide() override {}
-    void place() override {}
+    void hide() override {
+        release();
+    }
+    void place() override {
+        if (dock && dock->isVisible() && dock->target() == editor)
+            dock->place();
+    }
 
 private:
+    QPointer<OnScreenKeyboard> dock;
     QPointer<QLineEdit> editor;
+    void release() {
+        if (!dock || dock->target() != editor)
+            return;
+        dock->submitted = {};
+        dock->dismiss();
+    }
 };
 class Presentation final : public WindowPresentation {
 public:
@@ -132,7 +186,7 @@ public:
     }
 };
 }
-ReaderHostServices readerServices(std::shared_ptr<LightDevice> light) {
+ReaderHostServices readerServices(std::shared_ptr<LightDevice> light, OnScreenKeyboard *keyboard) {
     ReaderHostServices result;
     // The Scribe panel is monochrome: colorDisplay stays unset.
     result.browserAvailable = [] {
@@ -145,7 +199,7 @@ ReaderHostServices readerServices(std::shared_ptr<LightDevice> light) {
         return QTime::currentTime().toString("HH:mm");
     };
     result.battery = [] {
-        return BatteryStatus{};
+        return readBattery();
     };
     result.pageButtons = [] {
         return false;
@@ -178,8 +232,8 @@ ReaderHostServices readerServices(std::shared_ptr<LightDevice> light) {
     result.dictionary = [] {
         return std::make_unique<Dictionary>();
     };
-    result.keyboard = [](QWidget *, QLineEdit *editor) {
-        return std::make_unique<Keyboard>(editor);
+    result.keyboard = [keyboard](QWidget *, QLineEdit *editor) {
+        return std::make_unique<Keyboard>(keyboard, editor);
     };
     result.presentation = [](QWidget *) {
         return std::make_unique<Presentation>();
