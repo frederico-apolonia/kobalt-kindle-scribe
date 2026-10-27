@@ -1,0 +1,207 @@
+#include "../android/canvas.h"
+#include "../android/reader.h"
+#include "../android/start_screen.h"
+#include "lifecycle.h"
+#include "light_device.h"
+#include "services.h"
+#include "assets/assets.h"
+#include "assets/bundled_fonts.h"
+#include "interfaces/reader/ui/style/fonts.h"
+#include "library/library_store.h"
+#include "library/scanner.h"
+#include "reading/reading_density.h"
+#include "storage/reader_storage.h"
+#include "support/diagnostics.h"
+#include <QApplication>
+#include <QCloseEvent>
+#include <QDebug>
+#include <QDir>
+#include <QFileInfo>
+#include <QFontDatabase>
+#include <QStackedLayout>
+#include <QTimer>
+#include <memory>
+#include <utility>
+
+using namespace kobalt;
+namespace {
+// Everything Kobalt owns lives under one folder on the user volume. Books are only read, from /mnt/us/documents.
+QString homeFolder() {
+    return qEnvironmentVariable("KOBALT_HOME", QStringLiteral("/mnt/us/kobalt"));
+}
+QString libraryFolder() {
+    return qEnvironmentVariable("KOBALT_LIBRARY", QStringLiteral("/mnt/us/documents"));
+}
+
+class Window : public QWidget {
+public:
+    Window(EngineFontInputs fonts, QString placeholder, std::shared_ptr<kindle::LightDevice> light)
+        : controller(storage::Paths{homeFolder() + "/state/config"}, std::move(fonts), std::move(placeholder),
+                     [light] { return kindle::readerServices(light); }, [](Qt::ScreenOrientation) {}),
+          store(homeFolder() + "/state/config", std::make_shared<library::LocalSource>()) {
+        setWindowTitle("Kobalt");
+        QPalette colors;
+        colors.setColor(QPalette::Window, Qt::white);
+        colors.setColor(QPalette::WindowText, Qt::black);
+        colors.setColor(QPalette::Base, Qt::white);
+        colors.setColor(QPalette::Text, Qt::black);
+        setPalette(colors);
+        setAutoFillBackground(true);
+        layout = new QStackedLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        start = new android::StartScreen(kindle::readerServices(light).presentation, store);
+        start->setDark(controller.preferences().value("dark_mode").toBool(false));
+        canvas = new android::WidgetCanvas(this);
+        layout->addWidget(start);
+        layout->addWidget(canvas);
+        canvas->viewportResized = [this] { canvas->fitContent(); };
+        connect(start, &android::StartScreen::bookRequested, this, &Window::openBook);
+        connect(start, &android::StartScreen::exitRequested, this, &QWidget::close);
+        connect(start, &android::StartScreen::markUnreadRequested, this, [this](const QString &key) {
+            if (controller.resetBook(key))
+                store.setMark(key, library::Book::Mark::Unread);
+            else
+                start->showLibraryError(tr("The book's reading settings and position could not be reset."));
+        });
+        // Books stay where they are: removing one only forgets it, and folders are fixed to the documents folder.
+        connect(start, &android::StartScreen::removeBookRequested, this, [this](const QString &key) {
+            store.removeBook(key);
+        });
+        connect(&controller, &android::ReaderController::openingProgress, start, &android::StartScreen::setProgress);
+        connect(&controller, &android::ReaderController::opened, this, [this] {
+            auto *reader = controller.window();
+            canvas->setContent(reader, true, 1.0);
+            setPalette(reader->palette());
+            layout->setCurrentWidget(canvas);
+            canvas->fitContent();
+            reader->show();
+            setUpdatesEnabled(true);
+            reader->checkpoint();
+            qInfo() << "Kobalt frame ready";
+        });
+        connect(&controller, &android::ReaderController::failed, this, [this](const QString &error) {
+            failed = true;
+            setPalette(start->palette());
+            start->showLibraryError(error);
+            layout->setCurrentWidget(start);
+            qWarning() << "Kobalt reader error:" << error;
+        });
+        connect(&controller, &android::ReaderController::closed, this, [this] {
+            recordProgress();
+            setPalette(start->palette());
+            start->setDark(controller.preferences().value("dark_mode").toBool(false));
+            if (!failed)
+                start->showLibrary();
+            layout->setCurrentWidget(start);
+            if (closing) {
+                QCoreApplication::quit();
+            }
+        });
+        connect(&lifecycle, &kindle::Lifecycle::goingToSleep, this, [this](int) {
+            if (auto *reader = controller.window())
+                reader->checkpoint();
+        });
+        connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+            if (state != Qt::ApplicationActive && controller.window())
+                controller.window()->checkpoint();
+        });
+        library::Folder documents{libraryFolder(), tr("Documents")};
+        bool known = false;
+        for (const auto &folder : store.index().folders)
+            known = known || folder.key == documents.key;
+        if (!known && QFileInfo(documents.key).isDir())
+            store.addFolder(documents);
+        QTimer::singleShot(0, this, [this] {
+            if (store.index().settings.checkAtStart)
+                store.scan();
+        });
+    }
+
+private:
+    android::ReaderController controller;
+    library::Store store;
+    kindle::Lifecycle lifecycle;
+    QStackedLayout *layout;
+    android::StartScreen *start;
+    android::WidgetCanvas *canvas;
+    QString openedKey;
+    bool closing = false, failed = false;
+    QSize pixels() const {
+        if (canvas->isVisible())
+            return canvas->pixelSize();
+        const auto area = contentsRect().size();
+        return {qRound(area.width() * devicePixelRatioF()), qRound(area.height() * devicePixelRatioF())};
+    }
+    void recordProgress() {
+        if (openedKey.isEmpty())
+            return;
+        const auto progress = library::savedProgress(controller.savedState(openedKey));
+        store.setProgress(std::exchange(openedKey, {}), progress.percent, progress.finished);
+    }
+    void openBook(const QString &path) {
+        if (closing)
+            return;
+        recordProgress();
+        const auto key = QFileInfo(path).absoluteFilePath();
+        if (!store.index().books.contains(key))
+            store.addBook(path);
+        openedKey = store.index().books.contains(key) ? key : QString();
+        if (!openedKey.isEmpty())
+            store.setOpened(openedKey);
+        failed = false;
+        start->showOpening();
+        layout->setCurrentWidget(start);
+        controller.open(path, pixels());
+    }
+    void closeEvent(QCloseEvent *event) override {
+        if (closing && controller.idle()) {
+            event->accept();
+            return;
+        }
+        event->ignore();
+        if (closing)
+            return;
+        if (start->dismissModal())
+            return;
+        if (auto *reader = controller.window()) {
+            reader->close();
+            return;
+        }
+        if (!controller.idle()) {
+            controller.close();
+            return;
+        }
+        closing = true;
+        controller.close();
+        QCoreApplication::quit();
+    }
+};
+}
+int main(int argc, char **argv) {
+    FontCopies copies;
+    QApplication app(argc, argv);
+    app.setApplicationName("Kobalt");
+    app.setOrganizationName("Kobalt");
+    app.setQuitOnLastWindowClosed(false);
+    AssetBundle assets(QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("assets"),
+                       QStringLiteral(KOBALT_VERSION));
+    if (!assets.available() || !ui::initializeInterfaceFonts(assets)) {
+        qCritical() << "Kobalt bundled assets are unavailable";
+        return 2;
+    }
+    for (const auto &file : bundledFontFiles(assets))
+        if (QFontDatabase::addApplicationFont(file) < 0) {
+            qCritical() << "Cannot register font" << file;
+            return 2;
+        }
+    // The Scribe panel is 300 ppi.
+    readingPpi.store(300);
+    ui::setDensity(300);
+    QApplication::setFont(ui::interfaceFont());
+    initializeDiagnostics(homeFolder() + "/state/diagnostics");
+    auto light = std::make_shared<kindle::LightDevice>();
+    Window window(engineFontInputs(assets, {}, homeFolder() + "/fonts", {}), placeholderFontFamily(assets, copies), light);
+    window.showFullScreen();
+    qInfo() << "Kobalt Kindle ready";
+    return app.exec();
+}
