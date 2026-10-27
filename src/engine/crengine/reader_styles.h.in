@@ -19,4 +19,7 @@ a[href] { color: black; text-decoration: underline; }
 a[data-kobalt-kobo-link="1"] { text-decoration: none; }
 se-span.kobo-link { border-bottom: 1px dotted currentColor; }
 hr { border: 1px inset black; }
+/* A width and height attribute pair with a max-width clamps only the width, and the page-height cap then shrinks
+   both unevenly, which stretched figures. Take the height from the width and the image's own proportions. */
+img[height] { height: auto; }
 )rrcss";
