@@ -29,6 +29,8 @@ public:
 
     QSize size() const { return QSize(int(state.screen_width), int(state.screen_height)); }
     int dpi() const { return int(state.screen_dpi); }
+    // The turn (FBInk's 0 to 3) the framebuffer had when Kobalt started: the Amazon UI follows the device with it.
+    int hardwareRotation() const { return int(state.current_rota); }
     void present(const QImage &image, const QRegion &region, const QPoint &windowPosition,
                  const QPoint &sourceOffset);
     // Logical screen turned 180 degrees from the panel (inverted portrait): flushes write mirrored.

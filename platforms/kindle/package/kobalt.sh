@@ -80,8 +80,11 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-KOBALT_KINDLE_ACCEL=$(timeout 5 lipc-get-prop com.lab126.winmgr accelerometer 2>/dev/null)
-export KOBALT_KINDLE_ACCEL
+# The plugin reads the device's pose from the accelerometer itself and the framebuffer's turn from the kernel. The
+# window manager's reading is only logged: it can disagree with what the UI shows. A KOBALT_KINDLE_ACCEL (U/D) set
+# in the environment forces the start-up orientation, for testing.
+echo "kobalt: winmgr accelerometer reads '$(timeout 5 lipc-get-prop com.lab126.winmgr accelerometer 2>/dev/null)'," \
+    "framebuffer rotate=$(cat /sys/class/graphics/fb0/rotate 2>/dev/null)"
 
 # Deadmen of earlier sessions would thaw the UI under this one: only the lock holder may run one.
 for process in /proc/[0-9]*; do

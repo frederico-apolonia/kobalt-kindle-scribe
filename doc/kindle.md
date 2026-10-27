@@ -8,7 +8,7 @@ The port is its own platform under `platforms/kindle/`. It reuses the shared rea
 
 - The Kobalt library (home, list and cover grid, search, sort, folders) and the reader with all of its settings.
 - Touch and the Wacom pen. The pen taps, turns pages, drags and selects text like a finger. Palm contacts are cancelled.
-- Automatic rotation between the two portrait orientations.
+- Automatic rotation between the two portrait orientations. The Amazon UI turns the framebuffer to follow the device and the display and touch panel turn with it, so Kobalt starts in whatever turn it finds (`/sys/class/graphics/fb0/rotate`, 3 with the device upright, 1 upside down) and flips what it draws and reads only when the accelerometer's pose disagrees with that.
 - Front light brightness and warmth, in the reader and on the library's Settings page.
 - Battery percentage and charging state, in the reader's menu, in the header and footer fields and in the library's header, next to the clock.
 - A Settings page in the library (the gear in its header) with the front light, dark mode and the sleep screen choices, so none of them needs a book to be open.
@@ -159,8 +159,8 @@ Nothing below touches the display or the Amazon UI. Run `kobalt` directly with `
 | `KOBALT_KINDLE_CLOSE=<ms>` | Closes the open book that long after start, as the back button does. |
 | `KOBALT_KINDLE_SLEEP=<ms>[,<ms>]` | Runs the sleep path that long after start, and the wake path at the second time. |
 | `KOBALT_KINDLE_TLSCHECK=<url>` | Fetches the URL once 1.5 seconds after start, logs the TLS library, the number of trusted CAs, the result and any certificate errors, then exits. |
-| `KOBALT_KINDLE_TRACE=1` | Logs touch, mouse and tablet events and the battery reading. |
-| `KOBALT_KINDLE_ACCEL=U\|D` | The orientation at start (upright or upside down). |
+| `KOBALT_KINDLE_TRACE=1` | Logs touch, mouse and tablet events (each touch with its raw and logical position), and the battery reading. |
+| `KOBALT_KINDLE_ACCEL=U\|D` | Forces the start-up orientation (portrait or inverted portrait, relative to the panel) instead of working it out from the accelerometer. |
 
 Run these on the device from a copy in `/tmp` if Kobalt is also running live, because a running executable cannot be replaced. Keep `/tmp` in mind: it is a 64 MB RAM disk shared with the system.
 

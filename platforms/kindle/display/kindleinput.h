@@ -37,11 +37,18 @@ public:
     // Cancel every touch contact and the pen state (rotation, suspend): Qt sees a touch cancel and a pen release,
     // never a stuck press.
     void releaseAll();
-    // Orientation reported by `lipc-get-prop com.lab126.winmgr accelerometer`, passed in by the launcher through
-    // KOBALT_KINDLE_ACCEL (U/D/L/R); KOReader's collapse of the four states to two portraits is kept.
-    static Qt::ScreenOrientation initialOrientation();
+    // The Amazon UI turns the framebuffer itself (rotation 1 or 3) to follow the device, and the display and the
+    // touch panel turn with it. Kobalt starts with whatever turn the UI had, so it only flips what it draws and reads
+    // by 180 degrees when the device's pose and that turn disagree: `baseFlip` is true for rotation 1, which goes with
+    // the device upside down; rotation 3 goes with it upright.
+    void setBaseFlip(bool flip) { baseFlip = flip; }
+    // The orientation to start in: from the accelerometer's present pose and the base flip. KOBALT_KINDLE_ACCEL
+    // (U/D/L/R, as lipc's winmgr reports them) overrides it for tests.
+    Qt::ScreenOrientation startingOrientation();
 
 private:
+    kindleinput::Orientation currentPose() const;
+    bool baseFlip = false;
     enum class Role { Touch, Pen, Orientation };
     struct Node;
     struct Replay;

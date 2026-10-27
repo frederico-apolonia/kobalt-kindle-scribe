@@ -86,8 +86,10 @@ KindleInput::KindleInput(QSize panelSize, std::function<void(Qt::ScreenOrientati
     settle.setSingleShot(true);
     settle.setInterval(700);
     QObject::connect(&settle, &QTimer::timeout, &settle, [this] {
-        const Qt::ScreenOrientation next = pending == Orientation::PortraitDown ? Qt::InvertedPortraitOrientation
-                                                                               : Qt::PortraitOrientation;
+        // The pose is absolute; what must be flipped is relative to the turn the framebuffer already has.
+        const Qt::ScreenOrientation next = (pending == Orientation::PortraitDown) != baseFlip
+                                               ? Qt::InvertedPortraitOrientation
+                                               : Qt::PortraitOrientation;
         if (next == current)
             return;
         current = next;
@@ -104,10 +106,36 @@ KindleInput::KindleInput(QSize panelSize, std::function<void(Qt::ScreenOrientati
 
 KindleInput::~KindleInput() = default;
 
-Qt::ScreenOrientation KindleInput::initialOrientation()
+Orientation KindleInput::currentPose() const
+{
+    for (const auto &node : nodes) {
+        input_absinfo info{};
+        if (node->role == Role::Orientation && ioctl(node->fd, EVIOCGABS(kindleinput::kAbsPressure), &info) == 0)
+            return kindleinput::orientationFromCode(info.value);
+    }
+    return Orientation::Unknown;
+}
+
+Qt::ScreenOrientation KindleInput::startingOrientation()
 {
     const QByteArray code = qgetenv("KOBALT_KINDLE_ACCEL").trimmed().toUpper();
-    return code == "D" || code == "R" ? Qt::InvertedPortraitOrientation : Qt::PortraitOrientation;
+    Qt::ScreenOrientation start = Qt::PortraitOrientation;
+    if (!code.isEmpty()) {
+        start = code == "D" || code == "R" ? Qt::InvertedPortraitOrientation : Qt::PortraitOrientation;
+    } else {
+        const Orientation pose = currentPose();
+        // An unreadable pose keeps what the Amazon UI showed.
+        if (pose == Orientation::PortraitUp || pose == Orientation::PortraitDown)
+            start = (pose == Orientation::PortraitDown) != baseFlip ? Qt::InvertedPortraitOrientation
+                                                                   : Qt::PortraitOrientation;
+        qInfo("kindlefb input: start-up pose %s, base flip %d -> %s",
+              pose == Orientation::PortraitUp     ? "up"
+              : pose == Orientation::PortraitDown ? "down"
+                                                  : "unknown",
+              int(baseFlip), start == Qt::PortraitOrientation ? "portrait" : "inverted portrait");
+    }
+    current = start;
+    return start;
 }
 
 void KindleInput::addTouchDevice(int maxX, int maxY)
@@ -331,6 +359,10 @@ void KindleInput::handleTouch(const RawEvent &event, ulong timestamp)
                                       p.y * double(panel.height() - 1) / touchMaxY);
         point.normalPosition = QPointF(where.x() / panel.width(), where.y() / panel.height());
         point.area = QRectF(where.x() - 4, where.y() - 4, 8, 8);
+        static const bool trace = qEnvironmentVariableIntValue("KOBALT_KINDLE_TRACE") != 0;
+        if (trace && p.state == TouchDecoder::State::Pressed)
+            qInfo("kindlefb touch: raw %d,%d -> logical %.0f,%.0f rotated=%d", int(p.x), int(p.y), where.x(), where.y(),
+                  int(rotated));
         point.pressure = std::clamp(p.pressure / 255.0, 0.0, 1.0);
         switch (p.state) {
         case TouchDecoder::State::Pressed: point.state = QEventPoint::State::Pressed; break;
