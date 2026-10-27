@@ -1,0 +1,27 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "kindle",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../../build/kindle-$env{KOBALT_KINDLE_HOST_ARCH}",
+      "toolchainFile": "$env{QT_KINDLE_PATH}/lib/cmake/Qt6/qt.toolchain.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "QT_HOST_PATH": "$env{QT_HOST_PATH}",
+        "QT_ADDITIONAL_PACKAGES_PREFIX_PATH": "$env{QT_KINDLE_SENSORS_PATH}",
+        "FBINK_SOURCE": "$env{FBINK_SOURCE}"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "kindle",
+      "configurePreset": "kindle",
+      "jobs": 2,
+      "targets": [
+        "package"
+      ]
+    }
+  ]
+}
