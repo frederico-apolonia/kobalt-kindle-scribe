@@ -54,7 +54,9 @@ public:
         case QEvent::TouchCancel:
         case QEvent::MouseButtonPress:
         case QEvent::MouseButtonRelease:
-            if (++count <= 200)
+        case QEvent::TabletPress:
+        case QEvent::TabletRelease:
+            if (++count <= 3000)
                 qInfo() << "trace:" << event->type() << object->metaObject()->className()
                         << (object->objectName().isEmpty() ? "" : object->objectName());
             break;

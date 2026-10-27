@@ -54,6 +54,8 @@ restore() {
             *lipc-wait-event*goingToScreenSaver*) kill "${process#/proc/}" 2>/dev/null ;;
         esac
     done
+    # Kobalt unpacks its fonts under /tmp (a small RAM disk) and only removes them on a clean exit.
+    rm -rf /tmp/kobalt-assets-* 2>/dev/null
     if [ "$SNAPSHOT_READY" -eq 1 ]; then
         "$APP/fbguard" restore "$SNAPSHOT" || echo "kobalt: framebuffer restore failed"
         rm -f "$SNAPSHOT"
