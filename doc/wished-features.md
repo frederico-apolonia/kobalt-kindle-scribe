@@ -6,10 +6,10 @@ Ideas for the Kindle Scribe port that are not built yet. Nothing here is committ
 
 - An in-app interface scale, separate from the book text size. Today the scale is the density constant
   (default 390, override with `KOBALT_KINDLE_DPI` at launch), which means editing the launcher to change it.
-- A library-wide settings page reachable without opening a book. Today settings exist only inside the reader
-  (font size, line spacing, margins, alignment, weight), so the library offers none.
+- More on the library's Settings page. It has the front light, dark mode and the sleep screen; the rest of the reader's settings (font size,
+  line spacing, margins, alignment, weight, sync, dictionaries) still need a book to be open, because the reader's settings panel is
+  built on an open book.
 - Page-turn refresh policy: fast, normal, or clean, plus how often to force a full flash to clear ghosting.
-- Front light and warmth controls from the library, not only from the reader.
 - Choice of library folder from the device, instead of the `KOBALT_LIBRARY` launcher variable.
 - Screen orientation lock, and a choice of whether to start in the orientation the accelerometer reports.
 - Sleep behaviour: what Kobalt shows on the lock screen and whether it reopens the book on wake.
@@ -20,5 +20,4 @@ Ideas for the Kindle Scribe port that are not built yet. Nothing here is committ
 - Dictionaries (StarDict). HTTPS works now, but the dictionary service is still the placeholder in
   `platforms/kindle/services.cpp`; the downloadable-dictionary service of the other hosts needs porting.
 - KOReader sync against a real sync server. The client builds with TLS but has not been tried on the device.
-- Battery level and clock in the library header (the reader already shows them).
 - Pen and palm-rejection handling.

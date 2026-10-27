@@ -8,6 +8,7 @@
 #include "sleep_screen.h"
 #include "assets/assets.h"
 #include "assets/bundled_fonts.h"
+#include "interfaces/library/library_view.h"
 #include "interfaces/reader/ui/style/fonts.h"
 #include "library/library_store.h"
 #include "library/scanner.h"
@@ -15,6 +16,7 @@
 #include "reading/sleep_screen.h"
 #include "storage/reader_storage.h"
 #include "support/diagnostics.h"
+#include "support/strings.h"
 #include <QAbstractButton>
 #include <QApplication>
 #include <QCloseEvent>
@@ -23,6 +25,7 @@
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QEvent>
+#include <QJsonObject>
 #include <QLineEdit>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -38,6 +41,7 @@
 #include <memory>
 #include <unistd.h>
 #include <utility>
+#include <iterator>
 
 using namespace kobalt;
 namespace {
@@ -97,6 +101,7 @@ public:
         start->setDark(controller.preferences().value("dark_mode").toBool(false));
         // No document pickers on the Kindle, and no back key: the library's More sheet offers Exit.
         start->setHostActions(false, true);
+        installLibrarySettings(light);
         canvas = new android::WidgetCanvas(this);
         layout->addWidget(start);
         layout->addWidget(canvas);
@@ -223,6 +228,19 @@ public:
                     QCoreApplication::exit(0);
                 });
             });
+        // Test hook: KOBALT_KINDLE_CLICK="<ms>:<object name>[,<ms>:<object name>...]" taps the visible button with that
+        // object name at each time, as a finger would. Names are the ones the widgets carry, such as librarySettings.
+        for (const auto &step : qEnvironmentVariable("KOBALT_KINDLE_CLICK").split(',', Qt::SkipEmptyParts)) {
+            const auto parts = step.split(':');
+            if (parts.size() != 2)
+                continue;
+            QTimer::singleShot(parts[0].toInt(), this, [name = parts[1]] {
+                for (auto *widget : QApplication::allWidgets())
+                    if (auto *button = qobject_cast<QAbstractButton *>(widget); button && button->objectName() == name &&
+                                                                                   button->isVisible())
+                        button->click();
+            });
+        }
         // Test hook: KOBALT_KINDLE_CLOSE=<ms> closes the open book that long after start, as the back button does.
         if (const int closeAfter = qEnvironmentVariableIntValue("KOBALT_KINDLE_CLOSE"); closeAfter > 0)
             QTimer::singleShot(closeAfter, this, [this] {
@@ -253,6 +271,77 @@ private:
     android::WidgetCanvas *canvas;
     QString openedKey;
     bool closing = false, failed = false, layoutRepairPending = false, asleep = false;
+    // One preference in the file that every book's settings share. The rest of the file stays as it was.
+    void savePreference(const QString &key, const QJsonValue &value) {
+        const auto path = storage::Paths{homeFolder() + "/state/config"}.preferences();
+        const auto saved = storage::readPreferences(path);
+        if (saved.status != storage::ReadStatus::Ok && saved.status != storage::ReadStatus::Missing) {
+            qWarning() << "Kobalt: the preferences file is unreadable, so" << key << "was not changed";
+            return;
+        }
+        auto next = saved.object;
+        next[key] = value;
+        if (!storage::writePreferences(path, next))
+            qWarning() << "Kobalt: could not save" << key;
+    }
+    // The library's header shows the clock and battery. Its Settings page shows the front light, and the choices that
+    // every book follows and a book's own settings also offer: dark mode and the sleep screen.
+    void installLibrarySettings(const std::shared_ptr<kindle::LightDevice> &light) {
+        const auto host = kindle::readerServices(light, {});
+        auto *view = start->library();
+        view->setStatus([clock = host.clock, battery = host.battery] {
+            const auto level = battery();
+            return library::LibraryView::HeaderStatus{clock(), level.percent, level.charging};
+        });
+        using Option = library::LibraryView::HostOption;
+        QVector<Option> options;
+        options.append({"dark", strings::get("reader.dark_mode"), strings::get("settings.dark_description"), {}, {},
+                        [this] { return controller.preferences().value("dark_mode").toBool(false) ? 1 : 0; },
+                        [this](int on) {
+                            savePreference(QStringLiteral("dark_mode"), on != 0);
+                            start->setDark(on != 0);
+                        }});
+        QStringList modes, modeDetails;
+        for (const auto mode : sleep::modes) {
+            const bool stock = mode == sleep::Mode::Stock, cover = mode == sleep::Mode::Cover;
+            modes << (stock ? host.stockSleepLabel : strings::get(cover ? "settings.sleep_cover" : "settings.sleep_page"));
+            modeDetails << (stock ? host.stockSleepDescription
+                                  : strings::get(cover ? "settings.sleep_cover_description"
+                                                       : "settings.sleep_page_description"));
+        }
+        options.append({"sleep", strings::get("settings.sleep_screen"), tr("What the screen shows while the device sleeps."),
+                        modes, modeDetails,
+                        [this] {
+                            const auto current = sleep::mode(controller.preferences());
+                            for (int i = 0; i < int(std::size(sleep::modes)); ++i)
+                                if (sleep::modes[i] == current)
+                                    return i;
+                            return 0;
+                        },
+                        [this](int index) {
+                            if (index >= 0 && index < int(std::size(sleep::modes)))
+                                savePreference(QString::fromLatin1(sleep::preferenceKey), sleep::value(sleep::modes[index]));
+                        }});
+        const QStringList tiles{strings::get("settings.sleep_tile_card"), strings::get("settings.sleep_tile_band"),
+                                strings::get("settings.sleep_tile_bookmark")};
+        const QStringList tileDetails{strings::get("settings.sleep_tile_card_description"),
+                                      strings::get("settings.sleep_tile_band_description"),
+                                      strings::get("settings.sleep_tile_bookmark_description")};
+        options.append({"tile", strings::get("settings.sleep_tile"), tr("How the reading status looks on the sleep screen."),
+                        tiles, tileDetails,
+                        [this] {
+                            const auto current = sleep::tile(controller.preferences());
+                            for (int i = 0; i < int(std::size(sleep::tiles)); ++i)
+                                if (sleep::tiles[i] == current)
+                                    return i;
+                            return 0;
+                        },
+                        [this](int index) {
+                            if (index >= 0 && index < int(std::size(sleep::tiles)))
+                                savePreference(QString::fromLatin1(sleep::tileKey), sleep::value(sleep::tiles[index]));
+                        }});
+        view->setHostSettings(std::move(options), host.light);
+    }
     QSize pixels() const {
         if (canvas->isVisible())
             return canvas->pixelSize();
@@ -293,6 +382,8 @@ private:
     }
     void leaveSleep() {
         auto *reader = controller.window();
+        // The clock the library shows stopped while the device slept.
+        start->library()->refreshStatus();
         if (!asleep)
             return;
         asleep = false;

@@ -9,8 +9,9 @@ The port is its own platform under `platforms/kindle/`. It reuses the shared rea
 - The Kobalt library (home, list and cover grid, search, sort, folders) and the reader with all of its settings.
 - Touch and the Wacom pen. The pen taps, turns pages, drags and selects text like a finger. Palm contacts are cancelled.
 - Automatic rotation between the two portrait orientations.
-- Front light brightness and warmth.
-- Battery percentage and charging state, in the reader's menu and in the header and footer fields.
+- Front light brightness and warmth, in the reader and on the library's Settings page.
+- Battery percentage and charging state, in the reader's menu, in the header and footer fields and in the library's header, next to the clock.
+- A Settings page in the library (the gear in its header) with the front light, dark mode and the sleep screen choices, so none of them needs a book to be open.
 - An on-screen keyboard for the library search and the in-book search, with letters, symbols and accented letters.
 - A sleep screen (book cover, or the dimmed page, with progress and battery) that stays on the panel while the device sleeps.
 - Images keep their proportions and are sized like KOReader's: CSS lengths use 160 ppi (`KOBALT_KINDLE_CSS_DPI`).
@@ -31,7 +32,7 @@ Not available yet, or not supported: dictionaries (the placeholder service only 
 
 Host services (`services.cpp`) supply the clock, battery, light, keyboard, presentation and sleep screen that the shared reader asks of its host. `keyboard.cpp` is the on-screen keyboard, drawn by Kobalt in window pixels above the library or reader. `lifecycle.cpp` listens to powerd (`lipc-wait-event`) for sleep and wake. `light_device.cpp` drives the front light through powerd.
 
-Platform differences from the other targets are kept to hooks the shared code already offers, plus a few optional fields on `ReaderHostServices` (`exitLabel`, `stockSleepLabel`, `stockSleepDescription`, `maxSleepPixels`), an optional Exit row in the library's More menu, an aspect-preserving `img[height]` rule, and a separate density for CSS lengths (`cssPpi` in `reading/reading_density.h`).
+Platform differences from the other targets are kept to hooks the shared code already offers, plus a few optional fields on `ReaderHostServices` (`exitLabel`, `stockSleepLabel`, `stockSleepDescription`, `maxSleepPixels`), an optional Exit row in the library's More menu, an optional clock and battery in the library's header and an optional Settings page for the front light and host options (`LibraryView::setStatus`, `LibraryView::setHostSettings`), an aspect-preserving `img[height]` rule, and a separate density for CSS lengths (`cssPpi` in `reading/reading_density.h`).
 
 ## Building
 
@@ -111,6 +112,7 @@ Books are read from `/mnt/us/books` (the folder the entry passes as `KOBALT_LIBR
 ## Using it
 
 - Tap **Kobalt** in the Library. The Amazon UI is frozen and Kobalt takes the screen.
+- The library header shows the time and battery. The gear opens Settings: front light and warmth, dark mode, and what the sleep screen shows. They are the same preferences the reader's settings write, so a change in either place applies to both.
 - Reading: tap the sides of the page to turn it. The reader's menu has the settings, search, light and a back button labelled **Library**, which returns to Kobalt's library.
 - Leaving: **More** (top right of the library) then **Exit Kobalt**. The Amazon UI comes back where it was.
 - Sleep: press the power button. The reader saves its place and paints the sleep screen; the panel keeps it. The choice is in the reader's settings under Sleep and wake: the first option leaves the page as it is, the others show the book cover or the dimmed page with progress and battery. A new profile starts with the cover.
@@ -153,6 +155,7 @@ Nothing below touches the display or the Amazon UI. Run `kobalt` directly with `
 | `KOBALT_KINDLE_OPEN=<epub>` | Opens a book three seconds after start. |
 | `KOBALT_KINDLE_EXIT_AFTER=<s>` | Exits after that many seconds. |
 | `KOBALT_KINDLE_TYPE=<text>` | Taps the text out on the keyboard, in the library search or, with `KOBALT_KINDLE_OPEN`, the book search. `<shift>`, `<back>`, `<space>`, `<enter>`, `<?123>`, `<abc>`, `<áé>`, `<dismiss>` and `<submit>` name other keys and actions. |
+| `KOBALT_KINDLE_CLICK=<ms>:<name>[,<ms>:<name>...]` | Taps the visible button with that object name at each time (for example `librarySettings`, `librarySettingsBack`, `librarySetting_sleep`). |
 | `KOBALT_KINDLE_CLOSE=<ms>` | Closes the open book that long after start, as the back button does. |
 | `KOBALT_KINDLE_SLEEP=<ms>[,<ms>]` | Runs the sleep path that long after start, and the wake path at the second time. |
 | `KOBALT_KINDLE_TLSCHECK=<url>` | Fetches the URL once 1.5 seconds after start, logs the TLS library, the number of trusted CAs, the result and any certificate errors, then exits. |

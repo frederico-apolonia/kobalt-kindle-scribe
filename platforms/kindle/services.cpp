@@ -26,6 +26,10 @@ public:
     bool hasWarmth() const override {
         return device && device->hasWarmth();
     }
+    // The panel's "Follow Kobo warmth schedule" row has no counterpart on the Kindle.
+    bool hasAutomaticWarmth() const override {
+        return false;
+    }
     int warmth() const override {
         return device ? device->warmth() : 0;
     }
