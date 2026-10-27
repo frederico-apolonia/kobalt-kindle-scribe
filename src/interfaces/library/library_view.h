@@ -2,7 +2,9 @@
 #include "interfaces/reader/ui/controls/panels.h"
 #include "library/library_index.h"
 #include <functional>
+#include <memory>
 
+class QTimer;
 class QLineEdit;
 class QPushButton;
 namespace kobalt::ui {
@@ -12,9 +14,13 @@ class ModalOverlay;
 class ActionMenu;
 class LoadingIndicator;
 }
+namespace kobalt {
+class LightControls;
+}
 namespace kobalt::library {
 class BookPages;
 class FolderPage;
+class SettingsPage;
 class SortSheet;
 class MoreSheet;
 
@@ -35,6 +41,35 @@ public:
     // library itself is left.
     bool dismiss();
     void pageButton(int direction);
+    // Looks the status up again and redraws the header's status if it changed. Call it when the library is shown
+    // after the device slept; while visible, the view checks every few seconds by itself.
+    void refreshStatus();
+
+    // The clock and battery drawn at the right of the header. Hosts that report neither never call setStatus.
+    struct HeaderStatus {
+        QString time;
+        // Percent; negative when unknown, which leaves out the battery.
+        int battery = -1;
+        bool charging = false;
+        bool operator==(const HeaderStatus &other) const {
+            return time == other.time && battery == other.battery && charging == other.charging;
+        }
+    };
+    // `source` is asked for the status when the library is shown and every few seconds while it stays visible.
+    void setStatus(std::function<HeaderStatus()> source);
+
+    // A row of the Settings page that the host owns. With two or more `choices` it picks one of them, `value`
+    // returns the index of the current one, and `details` (optional, parallel to `choices`) explain each. With none
+    // it is a switch, and `value` is 0 or 1.
+    struct HostOption {
+        QString name, title, description;
+        QStringList choices, details;
+        std::function<int()> value;
+        std::function<void(int)> choose;
+    };
+    // Hosts with settings the library can offer without a book open give them here: rows, and a factory for the
+    // front light controls (empty: none). A header cell opens the page; without either, there is no cell.
+    void setHostSettings(QVector<HostOption> options, std::function<std::unique_ptr<LightControls>(QWidget *)> light);
 
     std::function<void(const QString &key)> openBook, removeFolder, removeBook;
     std::function<void(const QString &key, Book::Mark mark)> markBook;
@@ -49,6 +84,8 @@ public:
 protected:
     void resizeEvent(QResizeEvent *) override;
     void paintEvent(QPaintEvent *) override;
+    void showEvent(QShowEvent *) override;
+    void hideEvent(QHideEvent *) override;
 
 private:
     const Index &index;
@@ -64,10 +101,21 @@ private:
     SortSheet *sortSheet = nullptr;
     MoreSheet *moreSheet = nullptr;
     FolderPage *folderPage = nullptr;
+    SettingsPage *settingsPage = nullptr;
     ui::ModalOverlay *overlay = nullptr;
-    QTimer *throttle;
+    QTimer *throttle, *clockTimer;
+    HeaderStatus lastStatus;
+    std::function<HeaderStatus()> statusSource;
+    QVector<HostOption> hostOptions;
+    std::function<std::unique_ptr<LightControls>(QWidget *)> lightControls;
+    ui::CellButton *settingsCell;
     bool scanning = false, searching = false, dark = false;
     int found = 0;
+    bool hasHostSettings() const;
+    QRect statusArea() const;
+    void paintStatus(QPainter &painter, const QColor &ink, const QColor &paper) const;
+    void showSettings();
+    void showHostChoice(int option);
     void arrange();
     void rebuild(bool keepPage = true);
     void applySettings(const Settings &settings);

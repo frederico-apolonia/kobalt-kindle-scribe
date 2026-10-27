@@ -7,12 +7,15 @@
 #include "interfaces/reader/ui/controls/rows.h"
 #include "interfaces/reader/ui/dialogs/action_menu.h"
 #include "interfaces/reader/ui/dialogs/modals.h"
+#include "interfaces/reader/panels/light_panel.h"
 #include "interfaces/reader/ui/style/fonts.h"
 #include "interfaces/reader/ui/style/styles.h"
 #include "library/arrangement.h"
+#include "platform/api/light_controls.h"
 #include "support/strings.h"
 #include <QApplication>
 #include <QCache>
+#include <QHideEvent>
 #include <QImageReader>
 #include <QLabel>
 #include <QLineEdit>
@@ -21,7 +24,9 @@
 #include <QPainter>
 #include <QScrollArea>
 #include <QScroller>
+#include <QShowEvent>
 #include <QTimer>
+#include <QtMath>
 #include <QVBoxLayout>
 
 namespace kobalt::library {
@@ -42,6 +47,8 @@ inline constexpr Px emptyMargin{54}, emptyWidth{800}, message{56}, body{30}, but
 // A held finger may drift this far, about 4 mm, before the hold becomes a drag.
 inline constexpr Px holdSlop{48};
 inline constexpr int longPressMilliseconds = 550, coverCacheEntries = 64, throttleMilliseconds = 1000;
+// The header's clock follows the minute within this long; a minute-long wait would show it up to a minute late.
+inline constexpr int statusMilliseconds = 15000;
 }
 namespace lm = metrics;
 // The view behind each toolbar cell, in toolbar order.
@@ -719,6 +726,134 @@ private:
     }
 };
 
+// The host's settings that need no open book: the front light, then the host's own rows.
+class SettingsPage final : public ui::Panel {
+public:
+    using Option = LibraryView::HostOption;
+    SettingsPage(const QVector<Option> &options, const std::function<std::unique_ptr<LightControls>(QWidget *)> &light,
+                 QWidget *parent)
+        : ui::Panel(parent), options(options) {
+        setObjectName("librarySettingsPage");
+        back = new ui::CellButton(ui::ControlIcon::Back, this, c::backIcon);
+        back->setObjectName("librarySettingsBack");
+        back->setRule(Qt::RightEdge);
+        back->setAccessibleName(strings::get("library.back"));
+        title = new kobalt::ui::InterfaceLabel(strings::get("settings.title"), this);
+        title->setTextFormat(Qt::PlainText);
+        ui::readerStyle(title, ui::styles::brand(c::titleText) + "background:transparent;");
+        if (light)
+            controls = light(this);
+        // A device without a front light has nothing to show here.
+        if (controls && controls->initialize()) {
+            lightHeading = new ui::ListHeader(this);
+            lightHeading->setCaptions(strings::get("library.front_light"));
+            lightPanel = new LightPanel(*controls, this);
+            lightPanel->setObjectName("librarySettingsLight");
+            // Edge swipes belong to the reader.
+            lightPanel->setEdgeGesturesEnabled(false);
+            lightPanel->placement = [this](int height) {
+                return QRect(0, lightTop, width(), height);
+            };
+        }
+        for (int i = 0; i < options.size(); ++i) {
+            const auto &option = options[i];
+            if (option.choices.isEmpty()) {
+                auto *toggle = new ui::DescribedOption(option.title, option.description, this);
+                toggle->setObjectName("librarySetting_" + option.name);
+                auto look = toggle->presentation();
+                look.dividers = Qt::BottomEdge;
+                look.horizontalInset = c::inset;
+                look.labelPixels = c::labelText;
+                look.descriptionPixels = c::descriptionText;
+                look.minimumRowHeight = c::optionHeight;
+                toggle->setPresentation(look);
+                connect(toggle, &QCheckBox::clicked, this, [this, i](bool checked) {
+                    if (this->options[i].choose)
+                        this->options[i].choose(checked ? 1 : 0);
+                    refresh();
+                });
+                rows.append(toggle);
+            } else {
+                auto *row = new ui::ListRow(this);
+                row->setObjectName("librarySetting_" + option.name);
+                row->setTitle(option.title);
+                row->setDetail(option.description);
+                row->setEnabled(true);
+                connect(row, &QPushButton::clicked, this, [this, i] {
+                    if (chooseRequested)
+                        chooseRequested(i);
+                });
+                rows.append(row);
+            }
+        }
+        hide();
+    }
+    ~SettingsPage() override {
+        // The panel puts the light back when a drag is cut short, so it must go before the controls it uses.
+        delete lightPanel;
+    }
+    ui::CellButton *back;
+    // Called with the index of a pick-one row that was tapped.
+    std::function<void(int)> chooseRequested;
+
+    // Reads every row's value again from the host.
+    void refresh() {
+        for (int i = 0; i < options.size(); ++i) {
+            const auto &option = options[i];
+            const int value = option.value ? option.value() : 0;
+            if (option.choices.isEmpty())
+                static_cast<ui::DescribedOption *>(rows[i])->setChecked(value != 0);
+            else
+                static_cast<ui::ListRow *>(rows[i])->setAccessory(ui::ListRow::Caption{option.choices.value(value)});
+        }
+        arrange();
+    }
+
+protected:
+    void showEvent(QShowEvent *) override {
+        refresh();
+    }
+    void resizeEvent(QResizeEvent *) override {
+        arrange();
+    }
+    void paintEvent(QPaintEvent *event) override {
+        ui::Panel::paintEvent(event);
+        QPainter painter(this);
+        painter.fillRect(0, c::actionHeight - c::heavyRule, width(), c::heavyRule,
+                         palette().color(QPalette::WindowText));
+    }
+
+private:
+    QVector<Option> options;
+    std::unique_ptr<LightControls> controls;
+    LightPanel *lightPanel = nullptr;
+    ui::ListHeader *lightHeading = nullptr;
+    QLabel *title;
+    QVector<QWidget *> rows;
+    int lightTop = 0;
+    void arrange() {
+        const int bar = c::actionHeight - c::heavyRule;
+        back->setGeometry(0, 0, c::cellWidth, bar);
+        title->setGeometry(c::cellWidth + c::inset, 0, qMax(1, width() - c::cellWidth - 2 * c::inset), bar);
+        int y = c::actionHeight;
+        if (lightPanel) {
+            lightHeading->setGeometry(0, y, width(), ui::metrics::list::headerHeight);
+            lightTop = y + ui::metrics::list::headerHeight;
+            // Opening the panel also lays it out, at the width of this page.
+            if (isVisible())
+                lightPanel->open();
+            y = lightTop + (lightPanel->isVisible() ? lightPanel->height() : 0);
+        }
+        for (int i = 0; i < rows.size(); ++i) {
+            const int height = options[i].choices.isEmpty()
+                                   ? static_cast<ui::DescribedOption *>(rows[i])->heightForWidth(width())
+                                   : int(ui::metrics::list::twoLines);
+            rows[i]->setGeometry(0, y, width(), height);
+            y += height;
+        }
+    }
+};
+
 LibraryView::LibraryView(const Index &index, std::function<QString(const QString &)> coverPath, QWidget *parent)
     : ui::Panel(parent), index(index), coverPath(coverPath) {
     setObjectName("library");
@@ -733,6 +868,9 @@ LibraryView::LibraryView(const Index &index, std::function<QString(const QString
     };
     search = cell(ui::ControlIcon::Search, "librarySearch", strings::get("library.search"));
     more = cell(ui::ControlIcon::More, "libraryMore", strings::get("library.more"));
+    settingsCell = cell(ui::ControlIcon::Settings, "librarySettings", strings::get("settings.title"));
+    // Shown once the host gives it something to open.
+    settingsCell->hide();
     closeSearch = cell(ui::ControlIcon::Close, "libraryCloseSearch", strings::get("library.close_search"));
     closeSearch->hide();
     query = new QLineEdit(this);
@@ -771,6 +909,9 @@ LibraryView::LibraryView(const Index &index, std::function<QString(const QString
     connect(throttle, &QTimer::timeout, this, [this] {
         rebuild(true);
     });
+    clockTimer = new QTimer(this);
+    clockTimer->setInterval(lm::statusMilliseconds);
+    connect(clockTimer, &QTimer::timeout, this, &LibraryView::refreshStatus);
 
     connect(search, &QPushButton::clicked, this, [this] {
         setSearching(true);
@@ -783,6 +924,7 @@ LibraryView::LibraryView(const Index &index, std::function<QString(const QString
         rebuild(false);
     });
     connect(more, &QPushButton::clicked, this, &LibraryView::showMoreSheet);
+    connect(settingsCell, &QPushButton::clicked, this, &LibraryView::showSettings);
     connect(sort, &QPushButton::clicked, this, [this] {
         if (sortSheet && sortSheet->isVisible()) {
             closeOverlay();
@@ -967,13 +1109,17 @@ void LibraryView::showNotice(const QString &title, const QString &message) {
 }
 void LibraryView::pageButton(int direction) {
     if (!isVisible() || !isEnabled() || overlay || (sortSheet && sortSheet->isVisible()) ||
-        (moreSheet && moreSheet->isVisible()))
+        (moreSheet && moreSheet->isVisible()) || (settingsPage && settingsPage->isVisible()))
         return;
     ui::turnVisiblePageControl(folderPage && folderPage->isVisible() ? static_cast<QWidget *>(folderPage) : this, direction);
 }
 bool LibraryView::dismiss() {
     if (overlay || (sortSheet && sortSheet->isVisible()) || (moreSheet && moreSheet->isVisible())) {
         closeOverlay();
+        return true;
+    }
+    if (settingsPage && settingsPage->isVisible()) {
+        settingsPage->hide();
         return true;
     }
     if (folderPage && folderPage->isVisible()) {
@@ -1095,8 +1241,13 @@ void LibraryView::arrange() {
     if (!searching) {
         x -= c::cellWidth;
         more->setGeometry(x, 0, c::cellWidth, bar);
+        if (hasHostSettings()) {
+            x -= c::cellWidth;
+            settingsCell->setGeometry(x, 0, c::cellWidth, bar);
+        }
     }
     more->setVisible(!searching);
+    settingsCell->setVisible(!searching && hasHostSettings());
     x -= c::cellWidth;
     (searching ? static_cast<QWidget *>(closeSearch) : static_cast<QWidget *>(search))
         ->setGeometry(x, 0, c::cellWidth, bar);
@@ -1120,6 +1271,8 @@ void LibraryView::arrange() {
     empty->setGeometry(0, c::actionHeight, width(), qMax(1, height() - c::actionHeight));
     if (folderPage)
         folderPage->setGeometry(rect());
+    if (settingsPage)
+        settingsPage->setGeometry(rect());
     if (overlay)
         overlay->setGeometry(rect());
 }
@@ -1141,8 +1294,12 @@ void LibraryView::paintEvent(QPaintEvent *event) {
         return;
     const int bar = c::actionHeight - c::heavyRule;
     const int left = c::inset;
-    // Search and More take the right of the header.
-    const int right = width() - 2 * c::cellWidth - c::inset;
+    // Search, Settings and More take the right of the header, and the clock and battery sit before them.
+    int right = width() - (hasHostSettings() ? 3 : 2) * c::cellWidth - c::inset;
+    if (const auto area = statusArea(); !area.isEmpty()) {
+        paintStatus(painter, ink, ui::themeColors(dark).paper);
+        right = area.left() - ui::px(32);
+    }
     auto titleFont = ui::brandFont(c::titleText);
     painter.setFont(titleFont);
     painter.setPen(ink);
@@ -1155,6 +1312,163 @@ void LibraryView::paintEvent(QPaintEvent *event) {
     const int countLeft = left + titleWidth + ui::px(24);
     if (right > countLeft)
         ui::drawInterfaceText(painter, QRect(countLeft, 0, right - countLeft, bar), ui::elideInterfaceText(countText(shown), painter.font(), right - countLeft), Qt::AlignRight | Qt::AlignVCenter);
+}
+bool LibraryView::hasHostSettings() const {
+    return !hostOptions.isEmpty() || bool(lightControls);
+}
+void LibraryView::setHostSettings(QVector<HostOption> options, std::function<std::unique_ptr<LightControls>(QWidget *)> light) {
+    hostOptions = std::move(options);
+    lightControls = std::move(light);
+    // A page built from the earlier rows would be stale.
+    delete settingsPage;
+    settingsPage = nullptr;
+    arrange();
+    update();
+}
+// The most room the clock and battery can need, so a new reading never moves the title's count beside it.
+QRect LibraryView::statusArea() const {
+    if (!statusSource || searching)
+        return {};
+    const int bar = c::actionHeight - c::heavyRule;
+    const int right = width() - (hasHostSettings() ? 3 : 2) * c::cellWidth - c::inset;
+    const auto font = ui::interfaceFont(c::countText);
+    int wide = 0;
+    if (!lastStatus.time.isEmpty())
+        wide += qMax(ui::interfaceTextWidth(QStringLiteral("00:00"), font), ui::interfaceTextWidth(lastStatus.time, font));
+    if (lastStatus.battery >= 0) {
+        if (wide)
+            wide += ui::px(32);
+        wide += ui::interfaceTextWidth(strings::get("common.percent").arg(100), font) + ui::px(12) +
+                qCeil(ui::batteryWidth(int(ui::metrics::panel::batteryBodyHeight)));
+    }
+    return wide ? QRect(right - wide, 0, wide, bar) : QRect();
+}
+// Right to left: the battery, its percentage, the time.
+void LibraryView::paintStatus(QPainter &painter, const QColor &ink, const QColor &paper) const {
+    const auto area = statusArea();
+    const int bar = c::actionHeight - c::heavyRule;
+    const auto font = ui::interfaceFont(c::countText);
+    painter.setFont(font);
+    painter.setPen(ink);
+    int x = area.right() + 1;
+    if (lastStatus.battery >= 0) {
+        const qreal height = int(ui::metrics::panel::batteryBodyHeight);
+        x -= qCeil(ui::batteryWidth(height));
+        ui::paintBattery(painter, QRectF(x, (bar - height) / 2.0, int(ui::metrics::panel::batteryBodyWidth), height),
+                         lastStatus.battery, lastStatus.charging, ink, paper);
+        const auto percent = strings::get("common.percent").arg(lastStatus.battery);
+        const int percentWidth = ui::interfaceTextWidth(percent, font);
+        x -= ui::px(12) + percentWidth;
+        ui::drawInterfaceText(painter, QRect(x, 0, percentWidth, bar), percent, Qt::AlignRight | Qt::AlignVCenter);
+        x -= ui::px(32);
+    }
+    if (!lastStatus.time.isEmpty()) {
+        const int timeWidth = ui::interfaceTextWidth(lastStatus.time, font);
+        ui::drawInterfaceText(painter, QRect(x - timeWidth, 0, timeWidth, bar), lastStatus.time,
+                              Qt::AlignRight | Qt::AlignVCenter);
+    }
+}
+void LibraryView::setStatus(std::function<HeaderStatus()> source) {
+    statusSource = std::move(source);
+    lastStatus = {};
+    if (!statusSource) {
+        clockTimer->stop();
+        update();
+    } else if (isVisible()) {
+        refreshStatus();
+        clockTimer->start();
+    }
+}
+void LibraryView::refreshStatus() {
+    if (!statusSource)
+        return;
+    const auto next = statusSource();
+    if (next == lastStatus)
+        return;
+    const auto before = statusArea();
+    lastStatus = next;
+    if (!isVisible())
+        return;
+    // Only the status changes on a new minute. A battery appearing or going moves the count beside it, so the
+    // whole header is drawn again then.
+    const auto after = statusArea();
+    const int bar = c::actionHeight - c::heavyRule;
+    update(before.width() == after.width() ? after : QRect(0, 0, width(), bar));
+}
+void LibraryView::showEvent(QShowEvent *event) {
+    ui::Panel::showEvent(event);
+    if (!statusSource)
+        return;
+    refreshStatus();
+    clockTimer->start();
+}
+void LibraryView::hideEvent(QHideEvent *event) {
+    clockTimer->stop();
+    ui::Panel::hideEvent(event);
+}
+void LibraryView::showSettings() {
+    closeOverlay();
+    if (!settingsPage) {
+        settingsPage = new SettingsPage(hostOptions, lightControls, this);
+        connect(settingsPage->back, &QPushButton::clicked, settingsPage, &QWidget::hide);
+        settingsPage->chooseRequested = [this](int option) {
+            showHostChoice(option);
+        };
+        setDark(dark);
+    }
+    settingsPage->setGeometry(rect());
+    settingsPage->show();
+    settingsPage->raise();
+    // Rows the page lays out when it appears take the theme too.
+    setDark(dark);
+}
+// A pick-one row of the Settings page: its choices in a card, like the reader's settings choices.
+void LibraryView::showHostChoice(int index) {
+    if (index < 0 || index >= hostOptions.size())
+        return;
+    closeOverlay();
+    namespace nm = ui::metrics::notice;
+    const auto &option = hostOptions[index];
+    auto *sheet = new ui::ModalOverlay(this);
+    sheet->setObjectName("librarySettingChoice");
+    overlay = sheet;
+    sheet->setDimmed(true);
+    sheet->dismissed = [this] {
+        closeOverlay();
+    };
+    auto *card = sheet->card();
+    card->rows()->setContentsMargins(2, 2, 2, 2);
+    card->rows()->setSpacing(0);
+    card->rows()->addSpacing(nm::cardMargins.top());
+    auto *title = card->title(option.title, "librarySettingChoiceTitle");
+    title->setContentsMargins(c::inset, 0, c::inset, 0);
+    card->rows()->addSpacing(nm::cardMargins.bottom());
+    const int cardWidth = qMin<int>(nm::cardWidth, width() - 2 * nm::sideClearance);
+    auto *choices = new ui::RadioList(card);
+    choices->setObjectName("librarySettingChoices");
+    choices->setMinimumRowHeight(c::listActionHeight);
+    choices->setTopDivider(true);
+    for (int i = 0; i < option.choices.size(); ++i)
+        choices->add(QString("librarySettingChoice%1").arg(i), option.choices[i], option.details.value(i));
+    choices->setCurrent(option.value ? option.value() : 0);
+    choices->chosen = [this, index](int choice) {
+        // The overlay goes away with the row that was tapped, so take what is needed first.
+        const auto chosen = hostOptions.value(index).choose;
+        closeOverlay();
+        if (chosen)
+            chosen(choice);
+        if (settingsPage)
+            settingsPage->refresh();
+    };
+    card->rows()->addWidget(choices);
+    choices->setFixedHeight(choices->heightForWidth(cardWidth - 4));
+    card->fitToWidth(cardWidth);
+    setDark(dark);
+    sheet->setGeometry(rect());
+    sheet->centerCard();
+    sheet->show();
+    sheet->raise();
+    sheet->setFocus();
 }
 
 void LibraryView::showBookMenu(const QString &key) {

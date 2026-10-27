@@ -73,6 +73,7 @@
 "library.add_folder" = "Add folder";
 "library.more" = "More";
 "library.exit" = "Exit Kobalt";
+"library.front_light" = "Front light";
 "library.view_home" = "Home";
 "library.view_list" = "List";
 "library.view_grid" = "Cover grid";
