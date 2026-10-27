@@ -18,6 +18,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFontDatabase>
+#include <QEvent>
 #include <QStackedLayout>
 #include <QTimer>
 #include <memory>
@@ -32,6 +33,32 @@ QString homeFolder() {
 QString libraryFolder() {
     return qEnvironmentVariable("KOBALT_LIBRARY", QStringLiteral("/mnt/us/documents"));
 }
+
+// Test hook (KOBALT_KINDLE_TRACE=1): log every touch and mouse event the application receives.
+class Trace final : public QObject {
+public:
+    using QObject::QObject;
+    bool eventFilter(QObject *object, QEvent *event) override {
+        switch (event->type()) {
+        case QEvent::TouchBegin:
+        case QEvent::TouchUpdate:
+        case QEvent::TouchEnd:
+        case QEvent::TouchCancel:
+        case QEvent::MouseButtonPress:
+        case QEvent::MouseButtonRelease:
+            if (++count <= 200)
+                qInfo() << "trace:" << event->type() << object->metaObject()->className()
+                        << (object->objectName().isEmpty() ? "" : object->objectName());
+            break;
+        default:
+            break;
+        }
+        return false;
+    }
+
+private:
+    int count = 0;
+};
 
 class Window : public QWidget {
 public:
@@ -115,6 +142,10 @@ public:
             if (store.index().settings.checkAtStart)
                 store.scan();
         });
+        // Test hook: open a book without touch input, after the window has settled.
+        const auto autoOpen = qEnvironmentVariable("KOBALT_KINDLE_OPEN");
+        if (!autoOpen.isEmpty())
+            QTimer::singleShot(3000, this, [this, autoOpen] { openBook(autoOpen); });
     }
 
 private:
@@ -194,14 +225,21 @@ int main(int argc, char **argv) {
             qCritical() << "Cannot register font" << file;
             return 2;
         }
-    // The Scribe panel is 300 ppi.
-    readingPpi.store(300);
-    ui::setDensity(300);
+    // The panel is 300 ppi. KOBALT_KINDLE_DPI scales the interface and book text together; larger is bigger.
+    const int density = qBound(150, qEnvironmentVariableIntValue("KOBALT_KINDLE_DPI") ? qEnvironmentVariableIntValue("KOBALT_KINDLE_DPI") : 390, 600);
+    readingPpi.store(density);
+    ui::setDensity(density);
+    if (qEnvironmentVariableIntValue("KOBALT_KINDLE_TRACE"))
+        app.installEventFilter(new Trace(&app));
     QApplication::setFont(ui::interfaceFont());
     initializeDiagnostics(homeFolder() + "/state/diagnostics");
     auto light = std::make_shared<kindle::LightDevice>();
     Window window(engineFontInputs(assets, {}, homeFolder() + "/fonts", {}), placeholderFontFamily(assets, copies), light);
     window.showFullScreen();
+    // Test hook: leave cleanly after a number of seconds so a dry run can dump its last frame.
+    const int exitAfter = qEnvironmentVariableIntValue("KOBALT_KINDLE_EXIT_AFTER");
+    if (exitAfter > 0)
+        QTimer::singleShot(exitAfter * 1000, &app, [] { QCoreApplication::exit(0); });
     qInfo() << "Kobalt Kindle ready";
     return app.exec();
 }
