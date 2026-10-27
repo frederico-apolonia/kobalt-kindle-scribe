@@ -38,6 +38,9 @@ public:
     // On Android a book opened from the library on its own is Kobalt's copy,
     // which removal deletes. The confirmation says so.
     void setSingleBooksAreCopies(bool value);
+    // A host without document pickers hides the add-folder and open-book choices; one without a system back action
+    // adds an exit choice that emits exitRequested.
+    void setHostActions(bool pickers, bool exit);
 signals:
     void exitRequested();
     // From the library: open one of its books, add a folder, or open and add

@@ -78,6 +78,8 @@ public:
         layout->setContentsMargins(0, 0, 0, 0);
         start = new android::StartScreen(kindle::readerServices(light).presentation, store);
         start->setDark(controller.preferences().value("dark_mode").toBool(false));
+        // No document pickers on the Kindle, and no back key: the library's More sheet offers Exit.
+        start->setHostActions(false, true);
         canvas = new android::WidgetCanvas(this);
         layout->addWidget(start);
         layout->addWidget(canvas);

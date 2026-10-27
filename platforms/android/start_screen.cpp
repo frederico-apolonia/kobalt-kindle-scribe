@@ -99,6 +99,16 @@ void StartScreen::showLibraryError(const QString &error) {
     showLibrary();
     view->showNotice(strings::get("library.open_failed"), error);
 }
+void StartScreen::setHostActions(bool pickers, bool exit) {
+    if (!view)
+        return;
+    if (!pickers)
+        view->addFolder = view->openFile = {};
+    if (exit)
+        view->exitApp = [this] {
+            emit exitRequested();
+        };
+}
 void StartScreen::setSingleBooksAreCopies(bool value) {
     singleBooksAreCopies = value;
     if (view)
