@@ -111,6 +111,7 @@ private:
     ui::CellButton *settingsCell;
     bool scanning = false, searching = false, dark = false;
     int found = 0;
+    int statusReserve() const;
     bool hasHostSettings() const;
     QRect statusArea() const;
     void paintStatus(QPainter &painter, const QColor &ink, const QColor &paper) const;

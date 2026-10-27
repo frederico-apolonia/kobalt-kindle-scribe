@@ -1237,7 +1237,7 @@ void LibraryView::rebuild(bool keepPage) {
 }
 void LibraryView::arrange() {
     const int bar = c::actionHeight - c::heavyRule;
-    int x = width();
+    int x = width() - statusReserve();
     if (!searching) {
         x -= c::cellWidth;
         more->setGeometry(x, 0, c::cellWidth, bar);
@@ -1294,12 +1294,10 @@ void LibraryView::paintEvent(QPaintEvent *event) {
         return;
     const int bar = c::actionHeight - c::heavyRule;
     const int left = c::inset;
-    // Search, Settings and More take the right of the header, and the clock and battery sit before them.
-    int right = width() - (hasHostSettings() ? 3 : 2) * c::cellWidth - c::inset;
-    if (const auto area = statusArea(); !area.isEmpty()) {
+    // Search, Settings and More sit left of the clock and battery, which take the right edge of the header.
+    const int right = width() - (hasHostSettings() ? 3 : 2) * c::cellWidth - statusReserve() - c::inset;
+    if (!statusArea().isEmpty())
         paintStatus(painter, ink, ui::themeColors(dark).paper);
-        right = area.left() - ui::px(32);
-    }
     auto titleFont = ui::brandFont(c::titleText);
     painter.setFont(titleFont);
     painter.setPen(ink);
@@ -1330,7 +1328,7 @@ QRect LibraryView::statusArea() const {
     if (!statusSource || searching)
         return {};
     const int bar = c::actionHeight - c::heavyRule;
-    const int right = width() - (hasHostSettings() ? 3 : 2) * c::cellWidth - c::inset;
+    const int right = width() - c::inset;
     const auto font = ui::interfaceFont(c::countText);
     int wide = 0;
     if (!lastStatus.time.isEmpty())
@@ -1342,6 +1340,11 @@ QRect LibraryView::statusArea() const {
                 qCeil(ui::batteryWidth(int(ui::metrics::panel::batteryBodyHeight)));
     }
     return wide ? QRect(right - wide, 0, wide, bar) : QRect();
+}
+// The header width the status takes, with a margin on both sides; the cells sit left of it.
+int LibraryView::statusReserve() const {
+    const auto area = statusArea();
+    return area.isEmpty() ? 0 : area.width() + 2 * c::inset;
 }
 // Right to left: the battery, its percentage, the time.
 void LibraryView::paintStatus(QPainter &painter, const QColor &ink, const QColor &paper) const {
@@ -1373,6 +1376,7 @@ void LibraryView::setStatus(std::function<HeaderStatus()> source) {
     lastStatus = {};
     if (!statusSource) {
         clockTimer->stop();
+        arrange();
         update();
     } else if (isVisible()) {
         refreshStatus();
@@ -1387,13 +1391,15 @@ void LibraryView::refreshStatus() {
         return;
     const auto before = statusArea();
     lastStatus = next;
+    const auto after = statusArea();
+    // A battery appearing or going moves the cells and the count, so the whole header is drawn again then. On a
+    // new minute only the status changes.
+    const bool moved = before.width() != after.width();
+    if (moved)
+        arrange();
     if (!isVisible())
         return;
-    // Only the status changes on a new minute. A battery appearing or going moves the count beside it, so the
-    // whole header is drawn again then.
-    const auto after = statusArea();
-    const int bar = c::actionHeight - c::heavyRule;
-    update(before.width() == after.width() ? after : QRect(0, 0, width(), bar));
+    update(moved ? QRect(0, 0, width(), c::actionHeight - c::heavyRule) : after);
 }
 void LibraryView::showEvent(QShowEvent *event) {
     ui::Panel::showEvent(event);
