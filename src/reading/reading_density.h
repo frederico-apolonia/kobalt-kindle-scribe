@@ -7,6 +7,14 @@ namespace kobalt {
 // pixels, so reading sizes convert here. Each host sets it from its screen;
 // the interface keeps its own copy for UI sizes.
 inline std::atomic<int> readingPpi{300};
+// The density the engine uses to turn CSS lengths and image sizes into pixels (1 CSS px is 1/96 inch there). Zero
+// follows readingPpi. A host whose pages are much larger than the ones books were made for sets it lower, so
+// images that publishers size in CSS pixels do not fill the whole page.
+inline std::atomic<int> cssPpi{0};
+inline int renderPpi() {
+    const int value = cssPpi.load();
+    return value > 0 ? value : readingPpi.load();
+}
 
 // Reading sizes are designed at 300 ppi, like the UI, and keep their physical
 // size on other screens.

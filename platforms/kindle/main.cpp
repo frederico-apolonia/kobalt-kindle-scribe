@@ -348,6 +348,9 @@ int main(int argc, char **argv) {
     // The panel is 300 ppi. KOBALT_KINDLE_DPI scales the interface and book text together; larger is bigger.
     const int density = qBound(150, qEnvironmentVariableIntValue("KOBALT_KINDLE_DPI") ? qEnvironmentVariableIntValue("KOBALT_KINDLE_DPI") : 390, 600);
     readingPpi.store(density);
+    // Books size images in CSS pixels, at 96 per inch: a 736 pixel figure is 7.7 inches. On this 10.2 inch panel at
+    // the interface density that is the whole page, so CSS lengths use a lower density (KOReader's 160 by default).
+    cssPpi.store(qBound(48, qEnvironmentVariableIntValue("KOBALT_KINDLE_CSS_DPI") ? qEnvironmentVariableIntValue("KOBALT_KINDLE_CSS_DPI") : 160, 600));
     ui::setDensity(density);
     if (qEnvironmentVariableIntValue("KOBALT_KINDLE_TRACE"))
         app.installEventFilter(new Trace(&app));
