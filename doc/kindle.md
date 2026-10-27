@@ -110,7 +110,7 @@ Books are read from `/mnt/us/books` (the folder the entry passes as `KOBALT_LIBR
 
 `kobalt.sh` refuses to start while KOReader runs or another Kobalt holds `/var/tmp/kobalt-display.lock`. It then reads the accelerometer, disables the Amazon pillow overlay, freezes the window manager and the volume daemon (`SIGSTOP`, as KOReader does), snapshots the framebuffer with `fbguard` and runs Kobalt. The Amazon framework keeps running, because powerd ignores the power button while `lab126_gui` is stopped.
 
-On every exit path (normal exit, a crash, `SIGTERM`) the launcher restores the framebuffer, thaws the UI, re-enables pillow, removes the lock and the leftover `/tmp/kobalt-assets-*` folders, and reaps the power-event listeners. A deadman started in its own session thaws the UI after `KOBALT_DEADMAN_DELAY` seconds (4 hours by default) if the launcher itself is killed. A crash prints a backtrace and the module map to `kobalt.log`.
+On every exit path (normal exit, a crash, `SIGTERM`) the launcher restores the framebuffer, thaws the UI, re-enables pillow, removes the lock and the leftover `/tmp/kobalt-assets-*` folders, and reaps the power-event listeners. A deadman started in its own session watches the launcher and thaws the UI at once if the launcher dies without restoring (for example `SIGKILL`). The launcher reaps any deadman left by an earlier session when it starts. A crash prints a backtrace and the module map to `kobalt.log`.
 
 If the screen is ever stuck on a frozen UI over SSH: `killall -CONT awesome volumd; lipc-set-prop com.lab126.pillow disableEnablePillow enable`.
 
@@ -131,7 +131,6 @@ Set these in the environment of `kobalt.sh` (the library entry sets `KOBALT_LIBR
 | `KOBALT_HOME` | `/mnt/us/kobalt` | Where state (`state/`) and the log live. |
 | `KOBALT_KINDLE_DPI` | `390` | Interface and text density, 150 to 600. |
 | `KOBALT_KINDLE_CSS_DPI` | `160` | Density for CSS lengths and book images, 48 to 600. |
-| `KOBALT_DEADMAN_DELAY` | `14400` | Seconds before the deadman thaws the UI. |
 
 ## Testing without the panel
 

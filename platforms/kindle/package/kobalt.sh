@@ -11,7 +11,6 @@ HOME_DIR=${KOBALT_HOME:-/mnt/us/kobalt}
 LOCK=/var/tmp/kobalt-display.lock
 SNAPSHOT=/tmp/kobalt-framebuffer.raw
 LOG=$HOME_DIR/kobalt.log
-DEADMAN_DELAY=${KOBALT_DEADMAN_DELAY:-14400}
 DONE=/tmp/kobalt-session.done
 PATH=$PATH:/usr/sbin:/sbin:/usr/bin:/bin
 export PATH
@@ -21,6 +20,7 @@ AWESOME_STOPPED=0
 VOLUMD_STOPPED=0
 SNAPSHOT_READY=0
 LOCKED=0
+DEADMAN_PID=
 
 mkdir -p "$HOME_DIR" 2>/dev/null
 exec >>"$LOG" 2>&1
@@ -47,6 +47,7 @@ thaw_ui() {
 restore() {
     result=$?
     trap - EXIT HUP INT TERM
+    [ -n "$DEADMAN_PID" ] && kill "$DEADMAN_PID" 2>/dev/null
     : >"$DONE"
     # A crashed Kobalt leaves its power-event listeners (and the helper each one forks) running.
     for process in /proc/[0-9]*; do
@@ -80,14 +81,22 @@ trap 'exit 143' TERM
 KOBALT_KINDLE_ACCEL=$(timeout 5 lipc-get-prop com.lab126.winmgr accelerometer 2>/dev/null)
 export KOBALT_KINDLE_ACCEL
 
+# Deadmen of earlier sessions would thaw the UI under this one: only the lock holder may run one.
+for process in /proc/[0-9]*; do
+    case "$(tr '\000' ' ' <"$process/cmdline" 2>/dev/null)" in
+        *deadman*) kill "${process#/proc/}" 2>/dev/null ;;
+    esac
+done
+# The deadman watches this script. If it vanishes without restoring (SIGKILL), the UI is thawed at once.
 setsid sh -c '
-    sleep "$1"
+    while kill -0 "$1" 2>/dev/null; do sleep 10; done
     [ -e "$2" ] && exit 0
-    echo "kobalt deadman: session never finished; thawing the Amazon UI" >>"$3"
+    echo "kobalt deadman: the launcher died without restoring; thawing the Amazon UI" >>"$3"
     killall -CONT volumd; killall -CONT awesome
     lipc-set-prop com.lab126.pillow disableEnablePillow enable
     exit 0
-' deadman "$DEADMAN_DELAY" "$DONE" "$LOG" >/dev/null 2>&1 </dev/null &
+' kobalt-deadman "$$" "$DONE" "$LOG" >/dev/null 2>&1 </dev/null &
+DEADMAN_PID=$!
 
 UI_FROZEN=1
 lipc-set-prop com.lab126.pillow disableEnablePillow disable 2>/dev/null
