@@ -16,7 +16,7 @@ The port is its own platform under `platforms/kindle/`. It reuses the shared rea
 - Images keep their proportions and are sized like KOReader's: CSS lengths use 160 ppi (`KOBALT_KINDLE_CSS_DPI`).
 - Starting from the Library (a script entry with a cover), and exiting back to the Amazon UI.
 
-Not available yet, or not supported: dictionaries (the placeholder service only reports that none is installed), HTTPS (Qt is built without TLS), the browser, page-turn animations, library folder picking (Kobalt reads one folder), and any Kindle other than the Scribe 2022. See [wished features](wished-features.md).
+Not available yet, or not supported: dictionaries (the placeholder service only reports that none is installed), HTTPS and so KOReader sync and dictionary downloads (Qt is built without TLS), the browser, page-turn animations, library folder picking (Kobalt reads one folder), and any Kindle other than the Scribe 2022. See [wished features](wished-features.md).
 
 ## How it fits together
 
@@ -144,6 +144,7 @@ Nothing below touches the display or the Amazon UI. Run `kobalt` directly with `
 | `KOBALT_KINDLE_OPEN=<epub>` | Opens a book three seconds after start. |
 | `KOBALT_KINDLE_EXIT_AFTER=<s>` | Exits after that many seconds. |
 | `KOBALT_KINDLE_TYPE=<text>` | Taps the text out on the keyboard, in the library search or, with `KOBALT_KINDLE_OPEN`, the book search. `<shift>`, `<back>`, `<space>`, `<enter>`, `<?123>`, `<abc>`, `<áé>`, `<dismiss>` and `<submit>` name other keys and actions. |
+| `KOBALT_KINDLE_CLOSE=<ms>` | Closes the open book that long after start, as the back button does. |
 | `KOBALT_KINDLE_SLEEP=<ms>[,<ms>]` | Runs the sleep path that long after start, and the wake path at the second time. |
 | `KOBALT_KINDLE_TRACE=1` | Logs touch, mouse and tablet events and the battery reading. |
 | `KOBALT_KINDLE_ACCEL=U\|D` | The orientation at start (upright or upside down). |

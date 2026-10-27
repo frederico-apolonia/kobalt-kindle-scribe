@@ -1,13 +1,20 @@
 #include "sleep_screen.h"
 #include "interfaces/reader/ui/style/fonts.h"
 #include "interfaces/reader/views/sleep_screen.h"
+#include "storage/sleep_snapshot.h"
 #include "support/strings.h"
+#include <QFile>
 #include <QPaintEvent>
 #include <QPainter>
 #include <QWindow>
 
 namespace kobalt::kindle {
-SleepScreen::SleepScreen(QWidget *host) : QWidget(host)
+namespace {
+// One saved screen, whichever book it came from: this host has no record of the last read book to compare with.
+constexpr auto kToken = "kindle";
+}
+
+SleepScreen::SleepScreen(QWidget *host, QString snapshotPath) : QWidget(host), snapshotPath(std::move(snapshotPath))
 {
     setObjectName("kindleSleepScreen");
     setAttribute(Qt::WA_OpaquePaintEvent);
@@ -45,8 +52,25 @@ void SleepScreen::clear()
         handle->setProperty("kindlefb_full_refresh", true);
 }
 
-QImage SleepScreen::libraryPicture(QSize size, const BatteryStatus &battery)
+void SleepScreen::remember(const sleep::Snapshot &snapshot)
 {
+    last = snapshot;
+    QFile::remove(snapshotPath);
+    if (!snapshot.image.isNull() && snapshot.mode != sleep::Mode::Stock)
+        storage::writeSleepSnapshot(snapshotPath, snapshot, QString::fromLatin1(kToken));
+}
+
+QImage SleepScreen::libraryPicture(QSize size, const BatteryStatus &battery, sleep::Mode mode, sleep::Tile tile) const
+{
+    const auto status = battery.fullyCharged ? reader::SleepStatus::Charged
+                        : battery.charging   ? reader::SleepStatus::Charging
+                                             : reader::SleepStatus::Sleeping;
+    sleep::Snapshot book = last;
+    if (book.image.isNull() || book.mode != mode)
+        book = storage::readSleepSnapshot(snapshotPath, QString::fromLatin1(kToken), mode);
+    if (!book.image.isNull())
+        return reader::sleepScreenImage(std::move(book.image), book.progress, book.remaining, book.dark,
+                                        battery.percent, status, book.dimPage, tile, book.percent);
     QImage picture(size, QImage::Format_RGB32);
     if (picture.isNull())
         return {};
@@ -68,14 +92,11 @@ QImage SleepScreen::libraryPicture(QSize size, const BatteryStatus &battery)
             painter.fillRect(QRectF(left, top + bar * pitch, bar == 5 ? 42.3 * scale : markWidth, barHeight), ink);
         painter.setPen(ink);
         painter.setFont(name);
-        painter.drawText(QRectF(0, top + markHeight + gap, size.width(), metrics.height()), Qt::AlignHCenter | Qt::AlignTop,
-                         QStringLiteral("Kobalt"));
+        painter.drawText(QRectF(0, top + markHeight + gap, size.width(), metrics.height()),
+                         Qt::AlignHCenter | Qt::AlignTop, QStringLiteral("Kobalt"));
     }
-    const auto status = battery.fullyCharged ? reader::SleepStatus::Charged
-                        : battery.charging   ? reader::SleepStatus::Charging
-                                             : reader::SleepStatus::Sleeping;
     return reader::sleepScreenImage(std::move(picture), strings::get("library.title"), {}, false, battery.percent, status,
-                                    false);
+                                    false, tile);
 }
 
 void SleepScreen::submit(const QRegion &region)

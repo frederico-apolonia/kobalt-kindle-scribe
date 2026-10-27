@@ -104,7 +104,7 @@ public:
         // The fields live inside graphics scenes, where the application's focus widget is the view, not the field,
         // so the field's own focus events are the signal.
         keyboard = new kindle::OnScreenKeyboard(this);
-        sleepScreen = new kindle::SleepScreen(this);
+        sleepScreen = new kindle::SleepScreen(this, storage::Paths{homeFolder() + "/state/config"}.sleepScreen());
         // Tells the display plugin that this process paints the sleep picture: it waits for it before pausing.
         qApp->setProperty("kindlefb_sleep_screen", true);
         qApp->installEventFilter(this);
@@ -199,6 +199,12 @@ public:
                 }
             });
         }
+        // Test hook: KOBALT_KINDLE_CLOSE=<ms> closes the open book that long after start, as the back button does.
+        if (const int closeAfter = qEnvironmentVariableIntValue("KOBALT_KINDLE_CLOSE"); closeAfter > 0)
+            QTimer::singleShot(closeAfter, this, [this] {
+                if (auto *reader = controller.window())
+                    reader->close();
+            });
         // Test hook: KOBALT_KINDLE_SLEEP="<ms>[,<ms>]" runs the sleep path that long after start, and the wake path at
         // the second time, without a power event.
         const auto sleepTimes = qEnvironmentVariable("KOBALT_KINDLE_SLEEP").split(',', Qt::SkipEmptyParts);
@@ -238,8 +244,11 @@ private:
             return;
         if (!reader) {
             // No book open: the library is showing. Opening or closing a book leaves the screen as it is.
-            if (start->isVisible() && !closing &&
-                sleepScreen->present(kindle::SleepScreen::libraryPicture(size(), kindle::batteryStatus())))
+            const auto preferences = controller.preferences();
+            const auto mode = sleep::mode(preferences);
+            if (mode != sleep::Mode::Stock && start->isVisible() && !closing &&
+                sleepScreen->present(sleepScreen->libraryPicture(size(), kindle::batteryStatus(), mode,
+                                                                 sleep::tile(preferences))))
                 asleep = true;
             return;
         }

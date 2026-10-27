@@ -201,6 +201,10 @@ public:
         if (sleep)
             sleep->clear();
     }
+    void saveSleepScreen(const sleep::Snapshot &snapshot) override {
+        if (sleep)
+            sleep->remember(snapshot);
+    }
     void acceptHandoff(QDialog &, const std::function<void()> &accept) override {
         accept();
     }

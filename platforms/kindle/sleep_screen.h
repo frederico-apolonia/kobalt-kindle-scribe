@@ -9,7 +9,8 @@ namespace kobalt::kindle {
 // presenting it paints and submits one full refresh before that.
 class SleepScreen final : public QWidget {
 public:
-    explicit SleepScreen(QWidget *host);
+    // `snapshotPath` keeps the last book's sleep screen between sessions.
+    SleepScreen(QWidget *host, QString snapshotPath);
     // Covers the host with `image` and submits it to the panel at once. False if there is no image.
     bool present(const QImage &image);
     // Redraws part of the image already shown (the battery in its card). Never shows a hidden screen.
@@ -19,14 +20,20 @@ public:
     bool presented() const {
         return isVisible();
     }
-    // The picture for a sleep with no book open: the Kobalt mark and name, with the sleep card (battery included).
-    static QImage libraryPicture(QSize size, const BatteryStatus &battery);
+    // The reader hands over the screen of the book it is leaving (an empty one forgets it). It is kept in memory and
+    // in the snapshot file.
+    void remember(const sleep::Snapshot &snapshot);
+    // The picture for a sleep with no book open: the last book's sleep screen with the current battery, as the Kobo
+    // home screen shows it. Without one, the Kobalt mark and name with the same status tile.
+    QImage libraryPicture(QSize size, const BatteryStatus &battery, sleep::Mode mode, sleep::Tile tile) const;
 
 protected:
     void paintEvent(QPaintEvent *) override;
 
 private:
     QImage image;
+    QString snapshotPath;
+    sleep::Snapshot last;
     void submit(const QRegion &region);
 };
 }
