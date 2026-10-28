@@ -6,8 +6,11 @@
 # framebuffer is restored and the UI thawed. A deadman in its own session thaws the UI if this script is killed.
 #
 # Refuses to start while KOReader is running or another Kobalt holds the display lock.
+#
+# The state and the log live next to this script unless KOBALT_HOME says otherwise, so a second copy of the
+# folder (Kobalt Dev, see doc/kindle-workflow.md) is a whole second installation with its own state.
 APP=${KOBALT_APP:-$(cd "$(dirname "$0")" && pwd)}
-HOME_DIR=${KOBALT_HOME:-/mnt/us/kobalt}
+HOME_DIR=${KOBALT_HOME:-$APP}
 LOCK=/var/tmp/kobalt-display.lock
 SNAPSHOT=/tmp/kobalt-framebuffer.raw
 LOG=$HOME_DIR/kobalt.log
