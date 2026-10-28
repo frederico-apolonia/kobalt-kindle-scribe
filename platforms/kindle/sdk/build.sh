@@ -1,5 +1,5 @@
 #!/bin/sh
-# Cross-builds platforms/kindle in the arm64 builder image (see doc/kindle.md for the inputs). Output: build/kindle/package.
+# Cross-builds platforms/kindle in the arm64 builder image (inputs: Qt, qtsensors, OpenSSL, FBInk and the sysroot, as in the other scripts here). Output: build/kindle/package.
 #
 #   KINDLE_SYSROOT   koxtoolchain kindlehf sysroot (.../arm-kindlehf-linux-gnueabihf/sysroot)
 #   KINDLE_QT        Qt 6.11.3 build directory made by sdk/build-qt.sh (holds host/ and install/)
