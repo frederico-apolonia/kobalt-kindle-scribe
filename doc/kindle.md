@@ -93,6 +93,8 @@ The package does not contain Qt or OpenSSL. Copy `lib/` (Qt Core, Gui, Widgets, 
 
 ## Installing
 
+To keep a reading install apart from a development one, with `platforms/kindle/deploy.sh` to move builds between them, see [Kindle workflow](kindle-workflow.md).
+
 Install under `/mnt/us/kobalt` (user storage, so it survives firmware updates and is visible over USB):
 
 ```
