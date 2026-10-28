@@ -1,5 +1,5 @@
 #!/bin/sh
-# Cross-builds OpenSSL for the Kindle in the builder image. Qt links it for TLS (see doc/kindle.md).
+# Cross-builds OpenSSL for the Kindle in the builder image. Qt links it for TLS.
 #
 #   KINDLE_SYSROOT      koxtoolchain kindlehf sysroot
 #   KINDLE_OPENSSL_SRC  an unpacked OpenSSL source tree (3.5.9 was used, an LTS release)

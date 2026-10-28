@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-# /ossl is the OpenSSL install prefix built for the Kindle (see doc/kindle.md).
+# /ossl is the OpenSSL install prefix built for the Kindle (platforms/kindle/sdk/build-openssl.sh).
 src=/src
 build=/build
 jobs=${JOBS:-2}

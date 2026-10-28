@@ -1,6 +1,6 @@
 # The Kindle display and input plugin (QPA platform "kindlefb") and fbguard, the framebuffer snapshot tool the
 # launcher uses to give the Amazon UI its screen back. Both link FBInk, which is GPLv3 and is not vendored: build its
-# static library for the Kindle first and point FBINK_SOURCE at that tree (see doc/kindle.md).
+# static library for the Kindle first and point FBINK_SOURCE at that tree.
 find_package(Qt6 REQUIRED COMPONENTS CorePrivate GuiPrivate)
 if(NOT EXISTS "${FBINK_SOURCE}/fbink.h" OR NOT EXISTS "${FBINK_SOURCE}/Release/libfbink.a")
     message(FATAL_ERROR "Build FBInk for the Kindle first and set FBINK_SOURCE (found '${FBINK_SOURCE}')")
