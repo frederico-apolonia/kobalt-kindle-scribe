@@ -2,11 +2,15 @@
 #include "check.h"
 #include "reading/reading_book.h"
 #include "reading/appearance_settings.h"
+#include "reading/session_timeout.h"
 #include "interfaces/opening_message.h"
 #include "reading/reader_session.h"
 #include "storage/reader_storage.h"
 #include "storage/annotation_database.h"
 #include "storage/record_writer.h"
+#include "storage/profile_database.h"
+#include "support/diagnostics.h"
+#include <atomic>
 #include <QSqlQuery>
 #include "publication/native_resources.h"
 #include "support/qt_compat.h"
@@ -19,6 +23,7 @@
 #include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QThread>
 #include <utility>
 
 using namespace kobalt;
@@ -564,6 +569,152 @@ int main(int argc, char **argv) {
                 "Legacy diagnostic backend wrote session history");
         qputenv("KOBALT_ANNOTATIONS_SQLITE", "1");
     }
+    for (const auto minutes : sessionTimeout::choices) {
+        auto session = open(QSize(400, 600));
+        const auto hash = session->sourceHash();
+        const auto identity = QString("timeout-%1").arg(minutes);
+        qint64 utc = 100000;
+        ReadingBook book(std::move(session), paths.bookState(identity), paths, identity, hash, nullptr, {}, {}, {}, [&] { return utc; });
+        const auto count = [&] {
+            return historyValue("SELECT COUNT(*) FROM reading_sessions WHERE identity='" + identity + "'").toInt();
+        };
+        book.observeReading(); tick();
+        const QJsonObject preferences{{sessionTimeout::preferenceKey, minutes}};
+        book.sleepReading(preferences);
+        const auto first = book.sessionReadingMilliseconds();
+        require(first > 0, "Session timer fixture");
+        utc -= 60000;
+        book.observeReading();
+        require(book.sessionReadingMilliseconds() >= first, "Backward wall clock expired the session");
+        book.sleepReading(preferences);
+        utc += minutes ? qint64(minutes) * 60000 - 1 : qint64(30) * 86400000;
+        book.sleepReading(preferences); book.stopReading();
+        book.observeReading();
+        require(book.sessionReadingMilliseconds() >= first, "Short sleep or Never reset the session timer");
+        book.checkpointReadingHistory();
+        require(count() == 1, "Short sleep or Never split session history");
+        book.sleepReading(preferences);
+        const auto total = book.readingMilliseconds();
+        utc += minutes ? qint64(minutes) * 60000 : qint64(30) * 86400000;
+        book.observeReading();
+        require(book.readingMilliseconds() >= total, "Rollover reset the cumulative reading clock");
+        require(minutes ? book.sessionReadingMilliseconds() < first : book.sessionReadingMilliseconds() >= first,
+                "Expired sleep did not reset session time or Never did reset it");
+        book.checkpointReadingHistory();
+        require(count() == (minutes ? 2 : 1), "Exact timeout boundary split the wrong session count");
+        book.stopReading();
+    }
+    {
+        auto session = open();
+        const auto hash = session->sourceHash();
+        ReadingBook book(std::move(session), paths.bookState("sleep-history"), paths, "sleep-history", hash,
+                         nullptr, {}, {});
+        book.observeReading(); tick();
+        book.sleepReading({});
+        const auto paused = book.readingMilliseconds();
+        book.stopReading();
+        book.checkpointReadingHistory();
+        tick();
+        require(!book.readingActive() && book.readingMilliseconds() == paused,
+                "Sleeping book kept counting reading time");
+        require(historyValue("SELECT COUNT(*) FROM reading_sessions WHERE identity='sleep-history' AND status='active'").toInt() == 1,
+                "Sleep or hide completed a short session");
+        book.observeReading(); tick();
+        book.sleepReading({});
+        bool closed = false;
+        book.checkpointForClose([&](bool saved) { require(saved, "Sleeping close save"); closed = true; });
+        waitUntil([&] { return closed; });
+        require(historyValue("SELECT COUNT(*) FROM reading_sessions WHERE identity='sleep-history' AND status='completed'").toInt() == 1,
+                "Closing while sleeping did not finish the retained session");
+    }
+    {
+        Calls calls;
+        auto session = open();
+        const auto hash = session->sourceHash();
+        ReadingBook book(std::move(session), paths.bookState("native-history"), paths, "native-history", hash,
+                         std::make_unique<Bridge>(calls), {}, {});
+        book.observeReading();
+        tick();
+        QJsonObject snapshot;
+        require(book.checkpoint(&snapshot), "Native history initial checkpoint");
+        require(AnnotationDatabase::transaction(paths.directory, [](QSqlDatabase &db) {
+            QSqlQuery query(db);
+            return query.exec("CREATE TABLE native_history_audit(value INTEGER)") &&
+                   query.exec("CREATE TRIGGER audit_native_history AFTER UPDATE ON reading_sessions "
+                              "BEGIN INSERT INTO native_history_audit VALUES(1); END");
+        }), "Native history write audit");
+        for (int turn = 0; turn < 3; ++turn) {
+            require(book.session()->turn(1), "Native history page turn");
+            waitUntil([&] { return !book.session()->busy(); });
+            book.observeReading();
+            require(book.checkpoint(&snapshot, true), "Native history routine checkpoint");
+            storage::drainWriterThread();
+        }
+        require(calls.observed == 4, "History displaced native activity reporting");
+        require(historyValue("SELECT COUNT(*) FROM native_history_audit").toInt() == 0,
+                "Page turns added history transactions");
+        require(book.checkpointReadingHistory(), "Native history periodic checkpoint");
+        require(historyValue("SELECT COUNT(*) FROM native_history_audit").toInt() == 1,
+                "Periodic history save did not use one transaction");
+        std::atomic_bool entered{false}, released{false};
+        storage::RecordWriter blocker;
+        struct Release {
+            std::atomic_bool &released;
+            ~Release() { released = true; }
+        } release{released};
+        blocker.post([&] {
+            entered = true;
+            while (!released) QThread::msleep(1);
+            return true;
+        }, {});
+        waitUntil([&] { return entered.load(); });
+        book.stopReading(true);
+        const auto duration = book.readingMilliseconds();
+        require(book.savesPending(), "Final native history snapshot was not queued");
+        require(calls.stopped == 1, "History delayed native session stop behind the local writer");
+        bool closed = false, saved = false;
+        book.checkpointForClose([&](bool ok) { closed = true; saved = ok; });
+        tick();
+        require(!closed, "Close did not wait for queued history");
+        released = true;
+        waitUntil([&] { return closed; });
+        require(saved, "Native history close checkpoint failed");
+        require(historyValue("SELECT COUNT(*) FROM native_history_audit").toInt() == 2,
+                "Close rewrote the final history interval");
+        require(historyValue("SELECT SUM(active_ms) FROM reading_sessions WHERE identity='native-history'").toLongLong() == duration,
+                "Native history lost or duplicated reading duration");
+        require(historyValue("SELECT COUNT(*) FROM reading_sessions WHERE identity='native-history' AND status='completed'").toInt() == 1,
+                "Native history did not finish exactly one interval");
+        require(AnnotationDatabase::transaction(paths.directory, [](QSqlDatabase &db) {
+            QSqlQuery query(db);
+            return query.exec("DROP TRIGGER audit_native_history") && query.exec("DROP TABLE native_history_audit");
+        }), "Remove native history audit");
+        book.observeReading();
+        tick();
+        storage::drainWriterThread();
+        require(AnnotationDatabase::transaction(paths.directory, [](QSqlDatabase &db) {
+            QSqlQuery query(db);
+            return query.exec("CREATE TRIGGER refuse_native_history BEFORE UPDATE ON reading_sessions "
+                              "BEGIN SELECT RAISE(ABORT,'test'); END");
+        }), "Refuse final native history save");
+        book.stopReading(true);
+        closed = saved = false;
+        book.checkpointForClose([&](bool ok) { closed = true; saved = ok; });
+        waitUntil([&] { return closed; });
+        require(!saved, "Close ignored a failed native history save");
+        const auto stopped = book.readingMilliseconds();
+        tick();
+        require(book.readingMilliseconds() == stopped, "Failed close kept counting reading time");
+        require(AnnotationDatabase::transaction(paths.directory, [](QSqlDatabase &db) {
+            QSqlQuery query(db); return query.exec("DROP TRIGGER refuse_native_history");
+        }), "Release final native history save");
+        closed = saved = false;
+        book.checkpointForClose([&](bool ok) { closed = true; saved = ok; });
+        waitUntil([&] { return closed; });
+        require(saved && historyValue("SELECT SUM(active_ms) FROM reading_sessions WHERE identity='native-history'").toLongLong() == stopped,
+                "History retry lost or duplicated native reading time");
+        book.releaseNative(false);
+    }
     {
         Calls calls;
         auto session = open();
@@ -573,9 +724,10 @@ int main(int argc, char **argv) {
         require(book.usesNativeCloudSync(), "Downloaded native-library titles exclude KOsync");
         book.observeReading();
         require(calls.observed == 1, "Platform activity was not recorded");
-        require(!book.tracksReadingHistory() &&
-                historyValue("SELECT COUNT(*) FROM reading_sessions WHERE identity='store-id'").toInt() == 0,
-                "Native bridge also recorded standalone history");
+        require(book.tracksReadingHistory(), "Native bridge excluded Kobalt session history");
+        storage::drainWriterThread();
+        require(historyValue("SELECT COUNT(*) FROM reading_sessions WHERE identity='store-id'").toInt() == 1,
+                "Native bridge did not record Kobalt session history");
 
         calls.providesEstimates = true;
         calls.estimate = ReadingEstimates{12000, 45000, false};
@@ -591,6 +743,8 @@ int main(int argc, char **argv) {
         require(book.deviceTransition() && !book.canWriteNative() && calls.observed == 1 && calls.stopped == 1,
                 "Device transition did not stop platform activity");
         require(book.writeNative("position", {}), "Deferred platform write blocked local checkpoint");
+        require(book.nativeSaveResult() == ReadingBook::NativeSave::Failed,
+                "Unavailable native storage was reported as intentional local-only progress");
         require(calls.writes == 0, "Platform write ran during transition");
         calls.transition = false;
         ++calls.current.modified;
@@ -598,6 +752,7 @@ int main(int argc, char **argv) {
         book.pollProgress();
         require(book.pendingProgress(), "External progress change did not create a conflict");
         require(!book.writeNative("position", {}) && calls.writes == 0, "Conflict was overwritten without a choice");
+        require(book.nativeSaveResult() == ReadingBook::NativeSave::Conflict, "Native conflict lost its result");
         book.acknowledge(book.candidate(), false);
         require(book.session()->turn(1), "Cannot turn before saving native progress");
         waitUntil([&] {
@@ -617,13 +772,18 @@ int main(int argc, char **argv) {
         calls.failWrite = true;
         require(book.writeNative("position-two", {}), "Ordinary platform failure blocked local persistence");
         require(book.checkpoint(&snapshot), "Failed-write local checkpoint failed");
-        require(snapshot.value("nickel_progress").toObject() == committed.json() &&
-                    snapshot.value("native_writeback") == QStringLiteral("local-only") &&
-                    snapshot.value("native_writeback_error") == QStringLiteral("synthetic write failure"),
+        require(snapshot.value("nickel_progress").toObject() == committed.json(),
                 "Failed native write changed the confirmed baseline");
+        require(snapshot.value("native_writeback") == QStringLiteral("failed"),
+                "Failed native write lost its result");
+        require(snapshot.value("native_writeback_error") == QStringLiteral("synthetic write failure"),
+                "Failed native write lost its error");
+        require(book.nativeSaveResult() == ReadingBook::NativeSave::Failed, "Failed native save allowed clean close");
         const int writes = calls.writes;
         require(book.writeNative({}, "unmappable store position") && calls.writes == writes,
                 "Store book accepted a time-only write");
+        require(book.nativeSaveResult() == ReadingBook::NativeSave::LocalOnly,
+                "Unsupported store position was reported as a storage failure");
         const auto changeSql = [&](const QString &sql) {
             return AnnotationDatabase::transaction(paths.directory, [&](QSqlDatabase &db) {
                 QSqlQuery query(db); return query.exec(sql);
@@ -635,6 +795,56 @@ int main(int argc, char **argv) {
         require(changeSql("DROP TRIGGER fail_checkpoint") && book.checkpoint(&snapshot),
                 "Failed checkpoint was cached instead of retried");
         require(storage::readBookState(paths, "store-id").object == persistedBook(snapshot), "Retried checkpoint lost the current state");
+        {
+            QTemporaryDir logs;
+            require(logs.isValid(), "Cannot create close checkpoint diagnostics");
+            initializeDiagnostics(logs.path());
+            setDiagnosticsSync(false);
+            std::atomic<int> checkpoints{0};
+            setDiagnosticObserver([&](const QJsonObject &event) {
+                if (event.value("event") == QStringLiteral("profile-checkpoint"))
+                    ++checkpoints;
+            });
+            const auto closeCheckpoint = [&] {
+                bool done = false, saved = false;
+                book.checkpointForClose([&](bool result) { saved = result; done = true; });
+                waitUntil([&] { return done; });
+                return saved;
+            };
+            require(closeCheckpoint() && checkpoints == 0,
+                    "Already durable close checkpoint folded WAL again");
+            const auto routineRecord = [&](int value) {
+                bool saved = false;
+                storage::runOnWriterThread([&] {
+                    storage::RoutineWrites routine;
+                    saved = storage::writeRecord(paths.directory, "close-sync-check", {}, {{"value", value}});
+                });
+                require(saved && storage::profileHasUnsyncedWrites(), "Routine close fixture was already synced");
+            };
+            routineRecord(1);
+            require(closeCheckpoint() && checkpoints == 1 && !storage::profileHasUnsyncedWrites(),
+                    "Unchanged close record did not sync earlier routine writes");
+            routineRecord(2);
+            calls.failWrite = false;
+            require(book.writeNative("position-after-routine", {}), "Cannot update close baseline");
+            require(closeCheckpoint() && checkpoints == 1 && !storage::profileHasUnsyncedWrites(),
+                    "Synced close record redundantly checkpointed earlier routine writes");
+            const auto finalState = storage::readBookState(paths, "store-id").object;
+            require(finalState.value("nickel_progress").toObject() == calls.current.json(),
+                    "Close checkpoint lost the verified native baseline");
+            require(book.writeNative("position-before-failed-close", {}), "Cannot update failed close baseline");
+            require(changeSql("CREATE TRIGGER fail_close_checkpoint BEFORE UPDATE ON book_state BEGIN SELECT RAISE(ABORT,'test'); END"),
+                    "Cannot obstruct asynchronous close checkpoint");
+            require(!closeCheckpoint(), "Failed close record was accepted because the profile was synced");
+            require(changeSql("DROP TRIGGER fail_close_checkpoint") && closeCheckpoint(),
+                    "Failed asynchronous close checkpoint did not recover");
+            setDiagnosticObserver({});
+            setDiagnosticsSync(true);
+            storage::closeProfile();
+            require(storage::readRecord(paths.directory, "close-sync-check", {}).object.value("value") == 2 &&
+                        storage::readBookState(paths, "store-id").object.value("nickel_progress").toObject() == calls.current.json(),
+                    "Reopened profile lost routine writes or the final close baseline");
+        }
         book.releaseNative();
         require(book.usesNativeCloudSync(), "Releasing native services preserves the sync provider");
         require(calls.destroyed == 1 && !book.canWriteNative(), "Release retained platform services");

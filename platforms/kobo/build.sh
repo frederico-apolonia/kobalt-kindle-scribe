@@ -1,20 +1,38 @@
 #!/bin/bash
 set -euo pipefail
-if [[ $# -ne 1 || ! "$1" =~ ^qt[56]$ ]]; then
-    echo "Usage: bash platforms/kobo/build.sh qt5|qt6" >&2
+if [[ $# -ne 1 || ! "$1" =~ ^qt[56](-eval)?$ ]]; then
+    echo "Usage: bash platforms/kobo/build.sh qt5|qt6|qt5-eval|qt6-eval" >&2
     exit 2
 fi
 target=$1
 root=$(cd "$(dirname "$0")/../.." && pwd)
 jobs=${JOBS:-2}
 [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || { echo "JOBS must be positive" >&2; exit 2; }
-image=$(sh "$root/platforms/sdk-image.sh" "$target")
+image=$(sh "$root/platforms/sdk-image.sh" "${target%-eval}")
 engine=${CONTAINER_ENGINE:-docker}
 sdk_id=$("$engine" image inspect "$image" --format '{{.Id}}')
-commit=$(git -C "$root" rev-parse --short HEAD)
-modified=OFF
-if [[ -n $(git -C "$root" status --porcelain) ]]; then modified=ON; fi
-"$engine" run --rm --pull=never --user "$(id -u):$(id -g)" -e HOME=/tmp -e KOBALT_RELEASE_VERSION \
+info=$(cmake -P "$root/platforms/source-info.cmake")
+read -r commit modified KOBALT_RELEASE_VERSION <<< "$info"
+export KOBALT_RELEASE_VERSION
+# Own exactly this container, including when the foreground client is interrupted.
+mkdir -p "$root/build"
+run_dir=$(mktemp -d "$root/build/kobo-run.XXXXXX")
+cleanup() {
+    result=$?
+    trap - EXIT INT TERM
+    if [[ -s "$run_dir/container.cid" ]]; then
+        if ! "$engine" rm -f "$(cat "$run_dir/container.cid")" > /dev/null 2>&1; then
+            echo "Cannot remove the build container; its ID is retained in $run_dir/container.cid" >&2
+            exit 1
+        fi
+    fi
+    rm -rf "$run_dir"
+    exit "$result"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+"$engine" run --cidfile "$run_dir/container.cid" --pull=never --user "$(id -u):$(id -g)" -e HOME=/tmp -e KOBALT_RELEASE_VERSION \
     --volume "$root:/work" \
     --workdir /work/platforms/kobo "$image" bash -euc '
         started=$SECONDS

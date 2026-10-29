@@ -7,6 +7,8 @@
 #include "dictionaries_page.h"
 #include "kosync_page.h"
 #include "assets/font_catalog.h"
+#include "reading/style_sample.h"
+#include <QHash>
 #include <QStackedWidget>
 #include <QVector>
 #include <QPointer>
@@ -40,7 +42,7 @@ public:
     ~SettingsPanel() override;
     void dismissRestore();
     void showFontChoices(const QString &title, const QVector<ReadingFont> &fonts, const QString &current,
-                         const QString &defaultFamily, std::function<void(const QString &)> chosen,
+                         const QString &emptyLabel, std::function<void(const QString &)> chosen,
                          std::function<void(const QStringList &)> prepareFonts = {});
     void dismissFontChoices();
     void showHeaderFooterWeights(int current, const QFont &sampleFont, std::function<void(int)> chosen);
@@ -48,9 +50,27 @@ public:
     static QString dictionaryFontSizeLabel(int percent);
     void showColumnSpacingChoices(int current, std::function<void(int)> chosen);
     static QString columnSpacingLabel(int percent);
-    enum class AdvancedText { WordSpacing, Tracking, Pagination, VerticalSpacing, VerticalSpacingScope };
+    enum class AdvancedText { WordSpacing, Tracking, Pagination, VerticalSpacing, VerticalSpacingScope, ParagraphSpacing };
+    static QString paragraphSpacingLabel(int percent);
+    void showParagraphAdjustments(int spacing, int indent, std::function<void(int, int)> chosen);
+    // The sheet stays open while choosing, so each choice can be compared in
+    // its preview.
     void showAdvancedTextChoices(AdvancedText feature, int current, std::function<void(int)> chosen,
-                                 const QFont &sampleFont = {}, const QString &alignment = {});
+                                 const QString &alignment = {});
+    // Rendered sample pages for every option of one setting, shown when its
+    // sheet is open.
+    void setStylingSample(AdvancedText feature, const StyleSample &sample);
+    void clearStylingSamples();
+    // Called when the panel hides, so pending sample renders can stop.
+    std::function<void()> stylingHidden;
+    // Sizes the sample is drawn at, in device pixels, for a reading page.
+    // `edge` leaves room for the magnified bottom edge of page spacing.
+    QSize stylingPageSize(QSize readingPage, bool edge = false) const;
+    int stylingEdgeHeight() const;
+    // The page region, in device pixels, that fills the magnified edge.
+    QSize stylingEdgeSize(QSize readingPage) const;
+    QSize stylingCropSize(QSize readingPage, int horizontalMargin) const;
+    QSize stylingTextPageSize(QSize readingPage, int horizontalMargin) const;
     QPointer<ui::ModalOverlay> fontDialog;
     ui::CellButton *closeButton = nullptr;
     void showDictionaries(bool visible);
@@ -71,7 +91,8 @@ public:
     ui::CaptionButton *columnSpacingButton = nullptr;
     ui::CaptionButton *verticalSpacingButton = nullptr, *verticalSpacingScopeButton = nullptr;
     ui::CaptionButton *wordSpacingButton = nullptr, *trackingButton = nullptr, *widowsOrphansButton = nullptr;
-    ui::CaptionButton *sleepScreenButton = nullptr, *sleepTileButton = nullptr, *menuViewButton = nullptr;
+    ui::CaptionButton *paragraphSpacingButton = nullptr;
+    ui::CaptionButton *sleepScreenButton = nullptr, *sessionTimeoutButton = nullptr, *sleepTileButton = nullptr, *menuViewButton = nullptr;
     ui::CaptionButton *pageNavigationButton = nullptr, *tapZonesButton = nullptr, *navigationBarButton = nullptr,
                       *tappableLinksButton = nullptr;
     ui::DescribedOption *bionicOption = nullptr;
@@ -87,6 +108,8 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
 
 private:
+    void showStylingChoices(AdvancedText feature, int current, std::function<void(int)> chosen,
+                            const QString &alignment, int indent, std::function<void(int, int)> paragraphChosen);
     QWidget *tabRail = nullptr;
     QWidget *optionsViewport = nullptr, *optionsClip = nullptr;
     ui::PagerBar *optionsPager = nullptr;
@@ -96,5 +119,12 @@ private:
     void fitRail(int availableHeight = 0);
     QLabel *aboutDescription = nullptr;
     QPointer<ui::ChoiceModal> restoreDialog;
+    QHash<int, StyleSample> stylingSamples;
+    // The open styling sheet, if any, and the option its preview shows.
+    QPointer<QWidget> stylingPreview;
+    std::function<void()> stylingSampleReady;
+    AdvancedText stylingFeature = AdvancedText::WordSpacing;
+    int stylingChoice = 0;
+    void showStylingPreview();
 };
 }

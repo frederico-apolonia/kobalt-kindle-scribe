@@ -17,6 +17,8 @@
 #include <QPainter>
 #include <QTimer>
 #include "ui/input.h"
+#include "ui/hold_timer.h"
+#include <QPointer>
 #include "support/strings.h"
 
 namespace kobalt {
@@ -33,13 +35,8 @@ public:
         detail->setAlignment(Qt::AlignCenter);
         detail->setWordWrap(true);
         hold.setSingleShot(true);
-        connect(&hold, &QTimer::timeout, this, [this] {
-            if (!isDown() || !isVisible() || !isEnabled() || !defaultRequested)
-                return;
-            held = true;
-            setDown(false);
-            defaultRequested();
-        });
+        hold.setInterval(550);
+        connect(&hold, &QTimer::timeout, this, [this] { triggerHold(); });
     }
     QLabel *detail;
     bool placeholder = false, fontMode = false;
@@ -47,12 +44,25 @@ public:
     std::function<void()> defaultRequested;
 
 protected:
+    void nextCheckState() override {
+        // Only the confirmed font selection changes the checkmark.
+    }
+    bool event(QEvent *event) override {
+        if (event->type() == QEvent::TouchCancel) {
+            hold.stop();
+            held = false;
+            setDown(false);
+            event->accept();
+            return true;
+        }
+        return ui::Button::event(event);
+    }
     void mousePressEvent(QMouseEvent *event) override {
         held = false;
         ui::Button::mousePressEvent(event);
         if (event->button() == Qt::LeftButton && isDown() && defaultRequested) {
             press = ui::mousePosition(event).toPoint();
-            hold.start(550);
+            hold.start(event);
         }
     }
     void mouseMoveEvent(QMouseEvent *event) override {
@@ -61,7 +71,13 @@ protected:
         ui::Button::mouseMoveEvent(event);
     }
     void mouseReleaseEvent(QMouseEvent *event) override {
-        hold.stop();
+        if ((ui::mousePosition(event).toPoint() - press).manhattanLength() > ui::px(12))
+            hold.stop();
+        QPointer<FontCell> guard(this);
+        if (hold.finish(event))
+            triggerHold();
+        if (!guard)
+            return;
         if (held) {
             held = false;
             setDown(false);
@@ -130,7 +146,14 @@ protected:
     }
 
 private:
-    QTimer hold;
+    void triggerHold() {
+        if (held || !isDown() || !isVisible() || !isEnabled() || !defaultRequested)
+            return;
+        held = true;
+        setDown(false);
+        defaultRequested();
+    }
+    ui::HoldTimer hold;
     QPoint press;
     bool held = false;
 };
@@ -453,7 +476,7 @@ void ChoiceScreen::redrawFonts() {
                 return;
             if (items[index].placeholder) {
                 if (defaultRequested)
-                    defaultRequested({});
+                    defaultRequested({}, true);
             } else if (selected)
                 selected(items[index].value);
         });
@@ -473,10 +496,10 @@ void ChoiceScreen::redrawFonts() {
         const bool selectedItem = !item.placeholder && item.value == selectedValue;
         fontCell->fontMode = true;
         fontCell->placeholder = item.placeholder;
-        fontCell->defaultRequested = !item.placeholder && !item.value.isEmpty()
+        fontCell->defaultRequested = !item.placeholder
                                          ? std::function<void()>([this, value = item.value] {
                                                if (defaultRequested)
-                                                   defaultRequested(value);
+                                                   defaultRequested(value, false);
                                            })
                                          : std::function<void()>{};
         button->setObjectName(item.name);

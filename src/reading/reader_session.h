@@ -3,6 +3,7 @@
 #include "open_request.h"
 #include "highlight_geometry.h"
 #include <QElapsedTimer>
+#include <QFileInfo>
 #include <QObject>
 #include <atomic>
 #include <functional>
@@ -193,6 +194,11 @@ public:
     bool busy() const {
         return running;
     }
+    // Whether the pages beside the current one are queued or being drawn,
+    // after the session itself has reported its work done.
+    bool preparingNeighbours() const {
+        return *neighbourJobs > 0;
+    }
     // Preview and later reading-command errors. Initial opening failures are
     // delivered only through the typed completion result.
     QString error() const {
@@ -314,6 +320,7 @@ public:
     }
     // Decodes on the engine worker. A cancelled or replaced source returns no image.
     void coverImage(QSize maximumSize, std::function<void(QImage)> finished, QString preferredPath = {});
+    void coverImage(QSize maximumSize, std::function<void(QImage, QFileInfo)> finished, QString preferredPath);
     QString chapterTitle() const {
         return frame.state.value("chapter_title").toString();
     }
@@ -395,6 +402,7 @@ private:
     std::shared_ptr<std::atomic<quint64>> newest = std::make_shared<std::atomic<quint64>>(0);
     std::shared_ptr<std::atomic<quint64>> newestLayout = std::make_shared<std::atomic<quint64>>(0);
     std::shared_ptr<std::atomic<quint64>> newestPreview = std::make_shared<std::atomic<quint64>>(0);
+    std::shared_ptr<std::atomic_int> neighbourJobs = std::make_shared<std::atomic_int>(0);
     std::shared_ptr<std::atomic_bool> searchCancelled;
     QString searchQuery;
     std::function<void(SearchBatch)> searchFinished;

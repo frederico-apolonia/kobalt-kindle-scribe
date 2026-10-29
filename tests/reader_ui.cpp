@@ -1,4 +1,9 @@
+#include "interfaces/reader/panels/choice_screen.h"
+#include "ui/hold_timer.h"
 #include "support/paint_regions.h"
+#include "interfaces/reader/ui/controls/keyboard.h"
+#include <QLineEdit>
+#include <QDynamicPropertyChangeEvent>
 #include "assets/bundled_fonts.h"
 #include "interfaces/library/library_view.h"
 #include "interfaces/reader/ui/controls/buttons.h"
@@ -49,6 +54,7 @@
 #include <QStackedLayout>
 #include <QTest>
 #include <QtMath>
+#include <utility>
 
 using namespace kobalt;
 namespace {
@@ -94,6 +100,12 @@ bool click(Canvas &canvas, QWidget *widget) {
         return false;
     return clickAt(canvas, point);
 }
+void pointerEvent(QWidget *widget, QEvent::Type type, ulong timestamp, QPoint point) {
+    QMouseEvent event(type, point, widget->mapToGlobal(point), Qt::LeftButton,
+                      type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+    event.setTimestamp(timestamp);
+    QApplication::sendEvent(widget, &event);
+}
 void variants() {
     QTest::addColumn<bool>("dark");
     QTest::addColumn<int>("ppi");
@@ -107,6 +119,466 @@ void variants() {
 class ReaderUiTests final : public QObject {
     Q_OBJECT
 private slots:
+    void holdSourceTime_data() {
+        QTest::addColumn<quint32>("pressed");
+        QTest::addColumn<quint32>("released");
+        QTest::addColumn<bool>("due");
+        QTest::newRow("short") << quint32(1000) << quint32(1085) << false;
+        QTest::newRow("before-deadline") << quint32(1000) << quint32(1549) << false;
+        QTest::newRow("deadline") << quint32(1000) << quint32(1550) << true;
+        QTest::newRow("hold") << quint32(1000) << quint32(2000) << true;
+        QTest::newRow("wrapped") << quint32(0xfffffff0u) << quint32(0x3d8u) << true;
+        QTest::newRow("backwards") << quint32(1000) << quint32(900) << false;
+    }
+    void holdSourceTime() {
+        QFETCH(quint32, pressed);
+        QFETCH(quint32, released);
+        QFETCH(bool, due);
+        ui::HoldTimer timer;
+        timer.setSingleShot(true);
+        timer.setInterval(550);
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(), QPointF(), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease, QPointF(), QPointF(), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        press.setTimestamp(pressed);
+        release.setTimestamp(released);
+        timer.start(&press);
+        QCOMPARE(timer.finish(&release), due);
+        QVERIFY(!timer.finish(&release));
+        timer.start(&press);
+        timer.stop();
+        QVERIFY(!timer.finish(&release));
+    }
+    void holdTimerDoesNotRepeatOnRelease() {
+        ui::HoldTimer timer;
+        timer.setSingleShot(true);
+        timer.setInterval(20);
+        QSignalSpy fired(&timer, &QTimer::timeout);
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(), QPointF(), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease, QPointF(), QPointF(), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        press.setTimestamp(1000);
+        release.setTimestamp(2000);
+        timer.start(&press);
+        QTRY_COMPARE(fired.size(), 1);
+        QVERIFY(!timer.finish(&release));
+    }
+    void fontSelectionDoesNotToggle_data() { variants(); }
+    void fontSelectionDoesNotToggle() {
+        QFETCH(bool, dark);
+        QFETCH(int, ppi);
+        ui::setDensity(ppi);
+        QWidget host;
+        host.resize(ui::px(1072), ui::px(1448));
+        ui::applyReaderPalette(&host, ui::readerPalette(host.palette(), dark));
+        ChoiceScreen picker(&host);
+        picker.setFontGeometry(QRect(0, 0, host.width(), picker.fontPanelHeight()));
+        QString current = "Libron";
+        int changes = 0;
+        picker.selected = [&](const QString &face) {
+            if (face == current)
+                return;
+            current = face;
+            ++changes;
+            picker.selectValue(face);
+        };
+        host.show();
+        Choice help{"Aa", "", "fontHelp"};
+        help.placeholder = true;
+        picker.showChoices("Font", {{"Publisher Fonts", "", "publisherFont"},
+                                     {"Libron", "Libron", "libronFont"}, help}, current, ChoiceScreen::Mode::Fonts);
+        auto *libron = picker.findChild<QPushButton *>("libronFont");
+        auto *publisher = picker.findChild<QPushButton *>("publisherFont");
+        QVERIFY(libron && publisher);
+        QVERIFY(libron->isChecked());
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            QTest::mouseClick(libron, Qt::LeftButton);
+            QCOMPARE(current, QString("Libron"));
+            QVERIFY(libron->isChecked());
+            QVERIFY(!publisher->isChecked());
+            QCOMPARE(changes, 0);
+        }
+        QTest::mouseClick(publisher, Qt::LeftButton);
+        QCOMPARE(current, QString());
+        QCOMPARE(changes, 1);
+        QVERIFY(publisher->isChecked());
+        QVERIFY(!libron->isChecked());
+        QTest::mouseClick(publisher, Qt::LeftButton);
+        QCOMPARE(current, QString());
+        QVERIFY(publisher->isChecked());
+        QCOMPARE(changes, 1);
+        QTest::keyClick(publisher, Qt::Key_Space);
+        QVERIFY(publisher->isChecked());
+        QCOMPARE(changes, 1);
+        QTest::mouseClick(picker.findChild<QPushButton *>("fontHelp"), Qt::LeftButton);
+        QVERIFY(publisher->isChecked());
+        QVERIFY(!picker.findChild<QPushButton *>("fontHelp")->isChecked());
+    }
+    void fontHoldCancellation_data() { variants(); }
+    void fontHoldCancellation() {
+        QFETCH(bool, dark);
+        QFETCH(int, ppi);
+        ui::setDensity(ppi);
+        QWidget host;
+        host.resize(ui::px(1072), ui::px(1448));
+        ui::applyReaderPalette(&host, ui::readerPalette(host.palette(), dark));
+        ChoiceScreen picker(&host);
+        picker.setFontGeometry(QRect(0, 0, host.width(), picker.fontPanelHeight()));
+        int selected = 0, defaults = 0;
+        picker.selected = [&](const QString &) { ++selected; };
+        QString requestedFace;
+        bool instructions = false;
+        picker.defaultRequested = [&](const QString &face, bool help) {
+            ++defaults;
+            requestedFace = face;
+            instructions = help;
+        };
+        host.show();
+        picker.showChoices("Font", {{"Libron", "Libron", "holdFont"}}, {}, ChoiceScreen::Mode::Fonts);
+        QCoreApplication::processEvents();
+        auto *cell = picker.findChild<QPushButton *>("holdFont");
+        QVERIFY(cell && cell->isVisible());
+        const auto point = cell->rect().center();
+        pointerEvent(cell, QEvent::MouseButtonPress, 1000, point);
+        QEvent cancel(QEvent::TouchCancel);
+        QApplication::sendEvent(cell, &cancel);
+        pointerEvent(cell, QEvent::MouseButtonRelease, 2000, point);
+        QCOMPARE(selected, 0);
+        QCOMPARE(defaults, 0);
+        QVERIFY(!cell->isDown());
+        pointerEvent(cell, QEvent::MouseButtonPress, 3000, point);
+        pointerEvent(cell, QEvent::MouseButtonRelease, 3085, point);
+        QCOMPARE(selected, 1);
+        QCOMPARE(defaults, 0);
+        pointerEvent(cell, QEvent::MouseButtonPress, 4000, point);
+        pointerEvent(cell, QEvent::MouseButtonRelease, 5000, point);
+        QCOMPARE(selected, 1);
+        QCOMPARE(defaults, 1);
+        pointerEvent(cell, QEvent::MouseButtonRelease, 5100, point);
+        QCOMPARE(defaults, 1);
+        Choice help{"Aa", "", "fontHelp"};
+        help.placeholder = true;
+        picker.showChoices("Font", {{"Publisher Fonts", "", "publisherFont"}, help}, {}, ChoiceScreen::Mode::Fonts);
+        cell = picker.findChild<QPushButton *>("publisherFont");
+        QVERIFY(cell && cell->isVisible());
+        pointerEvent(cell, QEvent::MouseButtonPress, 6000, cell->rect().center());
+        pointerEvent(cell, QEvent::MouseButtonRelease, 7000, cell->rect().center());
+        QCOMPARE(defaults, 2);
+        QVERIFY(requestedFace.isEmpty());
+        QVERIFY(!instructions);
+        QCOMPARE(selected, 1);
+        QTest::mouseClick(picker.findChild<QPushButton *>("fontHelp"), Qt::LeftButton);
+        QCOMPARE(defaults, 3);
+        QVERIFY(instructions);
+        QCOMPARE(selected, 1);
+    }
+    void holdCallbackCanDeleteReader() {
+        QPointer<ReadingPage> page = new ReadingPage(nullptr, [] {});
+        page->resize(600, 800);
+        page->show();
+        page->held = [page](QPoint) { delete page.data(); };
+        pointerEvent(page, QEvent::MouseButtonPress, 1000, QPoint(300, 400));
+        pointerEvent(page, QEvent::MouseButtonRelease, 2000, QPoint(300, 400));
+        QVERIFY(!page);
+    }
+    void canvasPreservesTouchTime() {
+        class StampWidget final : public QWidget {
+        public:
+            ulong pressed = 0, released = 0;
+            void mousePressEvent(QMouseEvent *event) override { pressed = event->timestamp(); }
+            void mouseReleaseEvent(QMouseEvent *event) override { released = event->timestamp(); }
+        };
+        android::WidgetCanvas canvas(nullptr);
+        auto *widget = new StampWidget;
+        canvas.setContent(widget);
+        auto *device = QTest::createTouchDevice();
+        for (const auto type : {QEvent::TouchBegin, QEvent::TouchEnd}) {
+            QTouchEvent event(type, device, Qt::NoModifier,
+                             {QEventPoint(0, type == QEvent::TouchBegin ? QEventPoint::Pressed : QEventPoint::Released,
+                                          QPointF(), QPointF())});
+            event.setTimestamp(type == QEvent::TouchBegin ? 1000 : 2000);
+            QApplication::sendEvent(canvas.viewport(), &event);
+        }
+        QCOMPARE(widget->pressed, ulong(1000));
+        QCOMPARE(widget->released, ulong(2000));
+    }
+    void widgetKeyboardEntry_data() { variants(); }
+    void widgetKeyboardEntry() {
+        QFETCH(bool, dark);
+        QFETCH(int, ppi);
+        ui::setDensity(ppi);
+        QWidget host;
+        host.setProperty("reader_dark", dark);
+        host.resize(ui::px(1072), ui::px(1448));
+        ui::applyReaderPalette(&host, ui::readerPalette(host.palette(), dark));
+        QLineEdit editor(&host), foreign(&host);
+        editor.setGeometry(20, 20, 400, 80);
+        foreign.setGeometry(20, 110, 400, 80);
+        auto keyboard = ui::makeWidgetKeyboard(&host, &editor);
+        host.show();
+        QVERIFY(keyboard->show());
+        auto *panel = host.findChild<QWidget *>("widgetKeyboard");
+        QVERIFY(panel && panel->isVisible());
+        QVERIFY(host.rect().contains(panel->geometry()));
+        QCOMPARE(host.property("reader_keyboard_bounds").toRect(), panel->geometry());
+        auto *firstKey = panel->findChild<QPushButton *>("widgetKey1_0");
+        QVERIFY(firstKey);
+        QCOMPARE(firstKey->font().family(), ui::interfaceFont().family());
+        QCOMPARE(firstKey->font().pixelSize(), ui::px(48));
+        QCOMPARE(panel->findChild<QPushButton *>("widgetKeyboardSymbols")->text(), QString("123"));
+        QCOMPARE(firstKey->grab().toImage().pixelColor(5, 5), ui::themeColors(dark).paper);
+        for (const auto *name : {"widgetKeyboardShift", "widgetKeyboardDelete", "widgetKeyboardDone"}) {
+            auto *key = panel->findChild<QPushButton *>(name);
+            QVERIFY(key && !key->icon().isNull());
+            QVERIFY(!key->accessibleName().isEmpty());
+            for (bool pressed : {false, true}) {
+                key->setDown(pressed);
+                const auto image = key->grab().toImage();
+                const bool primary = key->objectName() == "widgetKeyboardDone";
+                const bool inverted = primary ? !pressed : pressed;
+                const auto background = inverted ? ui::themeColors(dark).ink : ui::themeColors(dark).paper;
+                const auto foreground = inverted ? ui::themeColors(dark).paper : ui::themeColors(dark).ink;
+                QCOMPARE(image.pixelColor(8, image.height() / 2), background);
+                const auto keyboardImage = panel->grab().toImage();
+                const auto corner = key->mapTo(panel, QPoint()) * keyboardImage.devicePixelRatio();
+                QCOMPARE(keyboardImage.pixelColor(corner), ui::themeColors(dark).paper);
+                int ink = 0;
+                const auto area = image.rect().adjusted(image.width() / 4, image.height() / 4,
+                                                       -image.width() / 4, -image.height() / 4);
+                for (int y = area.top(); y <= area.bottom(); ++y)
+                    for (int x = area.left(); x <= area.right(); ++x)
+                        if (image.pixelColor(x, y) == foreground) ++ink;
+                QVERIFY2(ink > 4, name);
+            }
+            key->setDown(false);
+        }
+        auto *shift = panel->findChild<QPushButton *>("widgetKeyboardShift");
+        shift->setChecked(true);
+        const auto selectedShift = shift->grab().toImage();
+        QCOMPARE(selectedShift.pixelColor(8, selectedShift.height() / 2), ui::themeColors(dark).ink);
+        shift->setChecked(false);
+        auto *submit = panel->findChild<QPushButton *>("widgetKeyboardDone");
+        auto *erase = panel->findChild<QPushButton *>("widgetKeyboardDelete");
+        auto *symbols = panel->findChild<QPushButton *>("widgetKeyboardSymbols");
+        QVERIFY(submit->width() > shift->width());
+        QVERIFY(submit->width() > symbols->width());
+        QVERIFY(erase->mapTo(panel, erase->rect().bottomRight()).y() < submit->geometry().top());
+        QVERIFY(submit->geometry().contains(QPoint(erase->mapTo(panel, erase->rect().center()).x(), submit->geometry().center().y())));
+        int letters = 0;
+        for (auto *key : panel->findChildren<QPushButton *>()) {
+            const auto character = key->property("keyboard.character").toString();
+            if (!key->isVisible() || character.isEmpty()) continue;
+            QVERIFY(character.front().isLetter());
+            QCOMPARE(key->size(), firstKey->size());
+            ++letters;
+        }
+        QCOMPARE(letters, 26);
+        QString expected;
+        QSet<QChar> characters;
+        const auto typePage = [&] {
+            for (auto *key : panel->findChildren<QPushButton *>()) {
+                const auto character = key->property("keyboard.character").toString();
+                if (!key->isVisible() || character.isEmpty()) continue;
+                key->click();
+                expected += character;
+                characters.insert(character.front());
+            }
+        };
+        const auto action = [&](const char *name) {
+            auto *key = panel->findChild<QPushButton *>(name);
+            if (key) key->click();
+            return key != nullptr;
+        };
+        typePage();
+        QVERIFY(action("widgetKeyboardShift"));
+        typePage();
+        QVERIFY(action("widgetKeyboardSymbols"));
+        QCOMPARE(panel->findChild<QPushButton *>("widgetKeyboardSymbols")->text(), QString("ABC"));
+        typePage();
+        QVERIFY(action("widgetKeyboardSpace"));
+        expected += ' ';
+        characters.insert(' ');
+        for (ushort value = 32; value < 127; ++value)
+            QVERIFY2(characters.contains(QChar(value)), qPrintable(QString("Missing ASCII key %1").arg(value)));
+        QCOMPARE(editor.text(), expected);
+        QVERIFY(action("widgetKeyboardDelete"));
+        expected.chop(1);
+        QCOMPARE(editor.text(), expected);
+        editor.setText("replace me");
+        editor.selectAll();
+        QVERIFY(action("widgetKeyboardSpace"));
+        QCOMPARE(editor.text(), QString(" "));
+        foreign.setFocus();
+        QVERIFY(action("widgetKeyboardSpace"));
+        QCOMPARE(foreign.text(), QString());
+        QCOMPARE(editor.text(), QString("  "));
+        keyboard->setSubmitText("Search");
+        QCOMPARE(panel->findChild<QPushButton *>("widgetKeyboardDone")->text(), QString("Search"));
+        QCOMPARE(panel->findChild<QPushButton *>("widgetKeyboardDone")->accessibleName(), QString("Search"));
+        int submitted = 0;
+        keyboard->submitted = [&] { ++submitted; };
+        QVERIFY(action("widgetKeyboardDone"));
+        QCOMPARE(submitted, 1);
+        QVERIFY(panel->isHidden());
+        QVERIFY(host.property("reader_keyboard_bounds").toRect().isEmpty());
+        QTest::mouseClick(&editor, Qt::LeftButton);
+        QVERIFY(panel->isVisible());
+        QVERIFY(keyboard->show());
+        host.resize(800, 600);
+        keyboard->place();
+        QVERIFY(host.rect().contains(panel->geometry()));
+        QCOMPARE(host.property("reader_keyboard_bounds").toRect(), panel->geometry());
+        host.hide();
+        QVERIFY(host.property("reader_keyboard_bounds").toRect().isEmpty());
+        host.show();
+        QPointer<QWidget> guardedPanel(panel);
+        keyboard.reset();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(!guardedPanel);
+        QVERIFY(host.property("reader_keyboard_bounds").toRect().isEmpty());
+    }
+    void widgetKeyboardAccents_data() { variants(); }
+    void widgetKeyboardAccents() {
+        QFETCH(bool, dark);
+        QFETCH(int, ppi);
+        ui::setDensity(ppi);
+        QWidget host;
+        host.setProperty("reader_dark", dark);
+        host.resize(ui::px(1072), ui::px(1448));
+        ui::applyReaderPalette(&host, ui::readerPalette(host.palette(), dark));
+        QLineEdit editor(&host);
+        auto keyboard = ui::makeWidgetKeyboard(&host, &editor);
+        host.show();
+        QVERIFY(keyboard->show());
+        auto *panel = host.findChild<QWidget *>("widgetKeyboard");
+        auto *e = panel->findChild<QPushButton *>("widgetKey1_2");
+        auto *i = panel->findChild<QPushButton *>("widgetKey1_7");
+        QVERIFY(e && i);
+        const auto send = [](QPushButton *key, QEvent::Type type, ulong stamp) {
+            const auto point = key->rect().center();
+            QMouseEvent event(type, point, key->mapToGlobal(point), Qt::LeftButton,
+                              type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+            event.setTimestamp(stamp);
+            QApplication::sendEvent(key, &event);
+        };
+        // A queued hold and release must open choices without typing the base
+        // letter or choosing a variant underneath the original press point.
+        send(e, QEvent::MouseButtonPress, 1000);
+        send(e, QEvent::MouseButtonRelease, 2000);
+        auto *popup = panel->findChild<QWidget *>("widgetKeyboardAccents");
+        QVERIFY(popup && popup->isVisible());
+        QVERIFY(panel->rect().contains(popup->geometry()));
+        QCOMPARE(editor.text(), QString());
+        auto *acute = popup->findChild<QPushButton *>("widgetAccent00e9");
+        QVERIFY(acute);
+        acute->click();
+        QCOMPARE(editor.text(), QString::fromUtf8("é"));
+        QVERIFY(!panel->findChild<QWidget *>("widgetKeyboardAccents"));
+        panel->findChild<QPushButton *>("widgetKeyboardShift")->click();
+        send(i, QEvent::MouseButtonPress, 3000);
+        send(i, QEvent::MouseButtonRelease, 4000);
+        popup = panel->findChild<QWidget *>("widgetKeyboardAccents");
+        QVERIFY(popup);
+        auto *dotted = popup->findChild<QPushButton *>("widgetAccent0130");
+        QVERIFY(dotted);
+        dotted->click();
+        QCOMPARE(editor.text(), QString::fromUtf8("éİ"));
+        panel->findChild<QPushButton *>("widgetKeyboardDelete")->click();
+        QCOMPARE(editor.text(), QString::fromUtf8("é"));
+        panel->findChild<QPushButton *>("widgetKeyboardShift")->click();
+        QTest::mousePress(e, Qt::LeftButton);
+        QTRY_VERIFY(panel->findChild<QWidget *>("widgetKeyboardAccents"));
+        QEvent cancel(QEvent::TouchCancel);
+        QApplication::sendEvent(e, &cancel);
+        QTest::mouseRelease(e, Qt::LeftButton);
+        QVERIFY(!panel->findChild<QWidget *>("widgetKeyboardAccents"));
+        QCOMPARE(editor.text(), QString::fromUtf8("é"));
+        send(e, QEvent::MouseButtonPress, 4100);
+        send(e, QEvent::MouseButtonRelease, 4700);
+        QVERIFY(panel->findChild<QWidget *>("widgetKeyboardAccents"));
+        QTest::keyClick(&editor, Qt::Key_Escape);
+        QVERIFY(!panel->findChild<QWidget *>("widgetKeyboardAccents"));
+        QCOMPARE(editor.text(), QString::fromUtf8("é"));
+        send(e, QEvent::MouseButtonPress, 4800);
+        QTRY_VERIFY(panel->findChild<QWidget *>("widgetKeyboardAccents"));
+        popup = panel->findChild<QWidget *>("widgetKeyboardAccents");
+        acute = popup->findChild<QPushButton *>("widgetAccent00e9");
+        const auto destination = e->mapFromGlobal(acute->mapToGlobal(acute->rect().center()));
+        QMouseEvent release(QEvent::MouseButtonRelease, destination, e->mapToGlobal(destination),
+                            Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        release.setTimestamp(4900);
+        QApplication::sendEvent(e, &release);
+        QCOMPARE(editor.text(), QString::fromUtf8("éé"));
+        QVERIFY(!panel->findChild<QWidget *>("widgetKeyboardAccents"));
+        editor.setText(QString::fromUtf8("é"));
+        send(e, QEvent::MouseButtonPress, 5000);
+        send(e, QEvent::MouseButtonRelease, 5050);
+        QCOMPARE(editor.text(), QString::fromUtf8("ée"));
+        send(e, QEvent::MouseButtonPress, 6000);
+        keyboard->hide();
+        send(e, QEvent::MouseButtonRelease, 7000);
+        QCOMPARE(editor.text(), QString::fromUtf8("ée"));
+        QVERIFY(!panel->findChild<QWidget *>("widgetKeyboardAccents"));
+    }
+    void widgetKeyboardLifetime() {
+        QWidget host;
+        auto *editor = new QLineEdit(&host);
+        auto keyboard = ui::makeWidgetKeyboard(&host, editor);
+        host.show();
+        QVERIFY(keyboard->show());
+        delete editor;
+        QVERIFY(!keyboard->show());
+        keyboard->hide();
+        keyboard.reset();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QLineEdit survivingEditor;
+        auto *parent = new QWidget;
+        keyboard = ui::makeWidgetKeyboard(parent, &survivingEditor);
+        delete parent;
+        QVERIFY(!keyboard->show());
+        keyboard->hide();
+        keyboard->place();
+        keyboard.reset();
+        auto *nested = new QWidget(&host);
+        keyboard = ui::makeWidgetKeyboard(nested, &survivingEditor);
+        nested->show();
+        QVERIFY(keyboard->show());
+        delete nested;
+        QVERIFY(host.property("reader_keyboard_bounds").toRect().isEmpty());
+        keyboard.reset();
+        QLineEdit submitEditor(&host);
+        keyboard = ui::makeWidgetKeyboard(&host, &submitEditor);
+        QVERIFY(keyboard->show());
+        auto *done = host.findChild<QPushButton *>("widgetKeyboardDone");
+        QVERIFY(done);
+        int submissions = 0;
+        keyboard->submitted = [&] { ++submissions; keyboard.reset(); };
+        done->click();
+        QVERIFY(!keyboard);
+        QVERIFY(!done->isVisible());
+        done->click();
+        QCOMPARE(submissions, 1);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        class CloseOnBounds final : public QObject {
+        public:
+            std::function<void()> close;
+            bool eventFilter(QObject *object, QEvent *event) override {
+                if (event->type() == QEvent::DynamicPropertyChange &&
+                    static_cast<QDynamicPropertyChangeEvent *>(event)->propertyName() == "reader_keyboard_bounds" &&
+                    !object->property("reader_keyboard_bounds").toRect().isEmpty()) {
+                    const auto callback = std::exchange(close, {});
+                    if (callback) callback();
+                }
+                return false;
+            }
+        } closer;
+        keyboard = ui::makeWidgetKeyboard(&host, &submitEditor);
+        closer.close = [&] { keyboard.reset(); };
+        host.installEventFilter(&closer);
+        QVERIFY(!keyboard->show());
+        QVERIFY(!keyboard);
+        QVERIFY(host.property("reader_keyboard_bounds").toRect().isEmpty());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(!host.findChild<QWidget *>("widgetKeyboard"));
+    }
     void cancelledCanvasTouchRestoresSlider_data() {
         QTest::addColumn<bool>("secondFinger");
         QTest::newRow("touch-cancel") << false;
@@ -1829,7 +2301,7 @@ private slots:
         for (const auto size : {QSize(400, 600), QSize(600, 400)}) {
             page.resize(size);
             for (const auto &stripSize : {QStringLiteral("small"), QStringLiteral("large")}) {
-                page.chrome.headerSize = page.chrome.footerSize = stripSize;
+                page.chrome.headerSize = page.chrome.footerSize = headerfooter::legacySize(stripSize);
                 for (const bool bookmarked : {false, true}) {
                     page.bookmarked = bookmarked;
                     page.refreshContent();
@@ -1901,7 +2373,7 @@ private slots:
         values.chapterPage = 123;
         values.chapterPages = 456;
         for (const auto &size : {QStringLiteral("small"), QStringLiteral("large")}) {
-            page.chrome.headerSize = page.chrome.footerSize = size;
+            page.chrome.headerSize = page.chrome.footerSize = headerfooter::legacySize(size);
             for (int slot = 0; slot < headerfooter::slotCount; ++slot) {
                 page.chrome.slotFields.fill(headerfooter::Field::Nothing);
                 page.slotContents = {};
@@ -2032,13 +2504,13 @@ private slots:
             font.setFamily(family);
             page.setFont(font);
             int previousIconHeight = 0, smallIconHeight = 0;
-            for (const auto &size : {QStringLiteral("small"), QStringLiteral("medium"), QStringLiteral("large")}) {
+            for (const int size : {24, 26, 28, 48}) {
                 page.chrome.headerSize = page.chrome.footerSize = size;
-                const int step = size == "large" ? 2 : size == "medium" ? 1 : 0;
+                const int step = (size - 24) / 2;
                 QCOMPARE(page.topHeight(), ui::px(48 + step * 4));
                 QCOMPARE(page.bottomHeight(), ui::px(48 + step * 4));
                 QCOMPARE(page.headerTextPixels(), ui::px(24 + step * 2));
-                QCOMPARE(page.footerTextPixels(), ui::px(26 + step * 2));
+                QCOMPARE(page.footerTextPixels(), ui::px(24 + step * 2));
                 int iconHeight = 0;
                 int textHeights[2] = {};
                 for (int percent : {9, 50, 100}) {
@@ -2059,7 +2531,7 @@ private slots:
                         const auto icon = inkBounds(image, QRect(iconLeft, band.top(), page.width() - iconLeft, band.height()));
                         QVERIFY(!text.isEmpty() && !icon.isEmpty());
                         const auto context = QString("%1 %2 %3 footer=%4 text=%5,%6 icon=%7,%8")
-                            .arg(family, size).arg(percent).arg(footer).arg(text.top()).arg(text.height()).arg(icon.top()).arg(icon.height()).toUtf8();
+                            .arg(family).arg(size).arg(percent).arg(footer).arg(text.top()).arg(text.height()).arg(icon.top()).arg(icon.height()).toUtf8();
                         QVERIFY2(qAbs(text.top() + text.bottom() - icon.top() - icon.bottom()) <= 2, context.constData());
                         QVERIFY2(qAbs(text.height() - icon.height()) <= 3, context.constData());
                         if (textHeights[footer])
@@ -2073,9 +2545,9 @@ private slots:
                     }
                 }
                 QVERIFY(iconHeight >= previousIconHeight);
-                if (size == "small")
+                if (size == 24)
                     smallIconHeight = iconHeight;
-                if (size == "large")
+                if (size >= 28)
                     QVERIFY(iconHeight > smallIconHeight);
                 previousIconHeight = iconHeight;
             }

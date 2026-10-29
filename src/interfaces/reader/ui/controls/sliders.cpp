@@ -42,6 +42,13 @@ void SettingSlider::setMarkers(const QVector<int> &values, MarkerMode mode) {
     markerMode = mode;
     update();
 }
+void SettingSlider::setMarkerLabels(const QStringList &labels) {
+    markerLabels = labels;
+    const int height = m::control::sliderHeight + (labels.isEmpty() ? 0 : int(m::control::sliderLabelHeight));
+    readerStyle(this, QString("QSlider{min-height:%1px;max-height:%1px;}").arg(height));
+    updateGeometry();
+    update();
+}
 void SettingSlider::nudge(int steps) {
     setValue(qBound(minimum(), value() + steps * singleStep(), maximum()));
     if (committed)
@@ -51,6 +58,21 @@ void SettingSlider::paintEvent(QPaintEvent *) {
     QPainter painter(this);
     painter.fillRect(rect(), palette().color(QPalette::Window));
     const int x = positionForValue(value());
+    const int labelHeight = markerLabels.isEmpty() ? 0 : int(m::control::sliderLabelHeight);
+    const int center = (height() + labelHeight) / 2;
+    painter.setFont(interfaceFont(m::control::captionValueText));
+    painter.setPen(palette().color(QPalette::WindowText));
+    int labelRight = -int(m::control::captionGap);
+    for (int index = 0; index < markers.size() && index < markerLabels.size(); ++index) {
+        const int labelWidth = interfaceTextWidth(markerLabels[index], painter.font());
+        const int left = qBound(0, positionForValue(markers[index]) - labelWidth / 2, qMax(0, width() - labelWidth));
+        // Keep the first label, including Publisher, when a narrow panel cannot
+        // fit every label. The ticks and current value remain available.
+        if (left < labelRight + int(m::control::captionGap))
+            continue;
+        drawInterfaceText(painter, QRect(left, 0, labelWidth, labelHeight), markerLabels[index], Qt::AlignCenter);
+        labelRight = left + labelWidth;
+    }
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setPen(QPen(palette().color(QPalette::WindowText), m::control::sliderMarkerWidth));
     for (const int marker : markers) {
@@ -58,23 +80,23 @@ void SettingSlider::paintEvent(QPaintEvent *) {
             continue;
         if (dotMarkers) {
             painter.setBrush(palette().color(QPalette::WindowText));
-            painter.drawEllipse(QPoint(positionForValue(marker), height() / 2), int(m::control::sliderMarkerHeight) / 2,
+            painter.drawEllipse(QPoint(positionForValue(marker), center), int(m::control::sliderMarkerHeight) / 2,
                                 int(m::control::sliderMarkerHeight) / 2);
         } else {
-            painter.drawLine(positionForValue(marker), m::control::sliderMarkerTop, positionForValue(marker),
-                             m::control::sliderMarkerTop + m::control::sliderMarkerHeight);
+            painter.drawLine(positionForValue(marker), labelHeight + m::control::sliderMarkerTop, positionForValue(marker),
+                             labelHeight + m::control::sliderMarkerTop + m::control::sliderMarkerHeight);
         }
     }
     painter.setPen(QPen(palette().color(QPalette::WindowText), m::control::border));
-    painter.drawLine(m::control::sliderInset, height() / 2, width() - m::control::sliderInset, height() / 2);
-    painter.fillRect(QRect(m::control::sliderInset, height() / 2 - m::control::sliderFillHeight / 2,
+    painter.drawLine(m::control::sliderInset, center, width() - m::control::sliderInset, center);
+    painter.fillRect(QRect(m::control::sliderInset, center - m::control::sliderFillHeight / 2,
                            x - m::control::sliderInset, m::control::sliderFillHeight),
                      palette().color(QPalette::WindowText));
     painter.setBrush(palette().color(QPalette::Window));
     painter.setPen(QPen(palette().color(QPalette::WindowText), m::control::border));
-    painter.drawEllipse(QPoint(x, height() / 2), m::control::sliderRadius, m::control::sliderRadius);
+    painter.drawEllipse(QPoint(x, center), m::control::sliderRadius, m::control::sliderRadius);
     painter.setPen(QPen(palette().color(QPalette::WindowText), m::control::border));
-    painter.drawEllipse(QPoint(x, height() / 2), m::control::sliderInnerRadius, m::control::sliderInnerRadius);
+    painter.drawEllipse(QPoint(x, center), m::control::sliderInnerRadius, m::control::sliderInnerRadius);
 }
 bool SettingSlider::event(QEvent *event) {
     // The slider draws no hover state. See Button::event.
@@ -127,7 +149,7 @@ void SettingSlider::hideEvent(QHideEvent *event) {
 }
 int SettingSlider::positionForValue(int value) const {
     const int span = qMax(1, width() - 2 * m::control::sliderInset);
-    if (markerMode == MarkerMode::Stops && markers.size() > 1) {
+    if (markerMode != MarkerMode::Positions && markers.size() > 1) {
         if (value <= markers.first()) {
             return m::control::sliderInset;
         }
@@ -142,6 +164,14 @@ int SettingSlider::positionForValue(int value) const {
     return m::control::sliderInset + QStyle::sliderPositionFromValue(minimum(), maximum(), value, span);
 }
 void SettingSlider::moveTo(qreal x) {
+    if (markerMode == MarkerMode::Checkpoints && markers.size() > 1) {
+        const int span = qMax(1, width() - 2 * m::control::sliderInset);
+        const double position = qBound(0.0, double(x - m::control::sliderInset) * (markers.size() - 1) / span,
+                                       double(markers.size() - 1));
+        const int index = qMin(int(position), int(markers.size() - 2));
+        setValue(qRound(markers[index] + (position - index) * (markers[index + 1] - markers[index])));
+        return;
+    }
     if (markerMode == MarkerMode::Stops && markers.size() > 1) {
         const int span = qMax(1, width() - 2 * m::control::sliderInset);
         const int index =
@@ -326,7 +356,8 @@ void RangeOverview::hideEvent(QHideEvent *) {
 
 SettingSlider *sliderRow(QWidget *parent, QVBoxLayout *rows, const char *name, const char *labelName,
                          const QString &label, const char *lessName, const char *moreName, int minimum, int maximum,
-                         int step, std::function<void(int)> apply, const QString &prefix, const QString &suffix) {
+                         int step, std::function<void(int)> apply, const QString &prefix, const QString &suffix,
+                         const QStringList &markerLabels) {
     auto *row = new QWidget(parent);
     row->setMinimumHeight(m::control::stepSize);
     rows->addWidget(row);
@@ -337,7 +368,8 @@ SettingSlider *sliderRow(QWidget *parent, QVBoxLayout *rows, const char *name, c
     caption->setFixedWidth(m::control::captionWidth);
     line->addWidget(caption);
     auto *captionRows = new QVBoxLayout(caption);
-    captionRows->setContentsMargins(0, 0, m::control::captionRight, 0);
+    const int labelHeight = markerLabels.isEmpty() ? 0 : int(m::control::sliderLabelHeight);
+    captionRows->setContentsMargins(0, labelHeight, m::control::captionRight, 0);
     captionRows->setSpacing(px(2));
     auto *title = new ui::InterfaceLabel(label.section(':', 0, 0), caption);
     title->setObjectName(QString::fromLatin1(name) + "Caption");
@@ -349,6 +381,7 @@ SettingSlider *sliderRow(QWidget *parent, QVBoxLayout *rows, const char *name, c
     current->setSpacing(px(6));
     captionRows->addLayout(current);
     auto *prefixLabel = new ui::InterfaceLabel(strings::get("controls.currently"), caption);
+    prefixLabel->setObjectName(QString::fromLatin1(name) + "CurrentPrefix");
     auto *value = new ui::InterfaceLabel(caption);
     value->setObjectName(labelName);
     const auto secondary = styles::font(m::control::captionValueText) + "color:palette(placeholder-text);";
@@ -362,12 +395,28 @@ SettingSlider *sliderRow(QWidget *parent, QVBoxLayout *rows, const char *name, c
     less->setAccessibleName(strings::get("controls.decrease").arg(label.section(':', 0, 0).toLower()));
     auto *slider = new SettingSlider(parent, minimum, maximum, step);
     slider->setObjectName(name);
+    if (!markerLabels.isEmpty())
+        slider->setMarkerLabels(markerLabels);
     auto *more = new StepButton(ControlIcon::Plus, parent);
     more->setObjectName(moreName);
     more->setAccessibleName(strings::get("controls.increase").arg(label.section(':', 0, 0).toLower()));
-    line->addWidget(less, 0, Qt::AlignVCenter);
+    // Labels sit above the rail. Offset adjacent buttons by the same height,
+    // as the labeled header/footer sliders do, to keep their centers aligned.
+    const auto addStep = [line, labelHeight](QWidget *button) {
+        if (!labelHeight) {
+            line->addWidget(button, 0, Qt::AlignVCenter);
+            return;
+        }
+        auto *column = new QVBoxLayout;
+        column->setContentsMargins(0, 0, 0, 0);
+        column->setSpacing(0);
+        column->addSpacing(labelHeight);
+        column->addWidget(button, 0, Qt::AlignVCenter);
+        line->addLayout(column);
+    };
+    addStep(less);
     line->addWidget(slider, 1);
-    line->addWidget(more, 0, Qt::AlignVCenter);
+    addStep(more);
     slider->setAccessibleName(label.section(':', 0, 0));
     QObject::connect(slider, &QSlider::valueChanged, value, [value, prefix, suffix](int v) {
         value->setText(prefix + QString::number(v) + suffix);

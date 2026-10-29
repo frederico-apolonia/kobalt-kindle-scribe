@@ -51,6 +51,8 @@ configure_file("${source}/support/build_info.h.in" build_info.h @ONLY)
 # entry point is stubbed in display.cpp and the Amazon fonts are obfuscated, so only bundled fonts are used.
 file(GLOB_RECURSE shared CONFIGURE_DEPENDS "${source}/*.cpp" "${source}/*.h")
 list(REMOVE_ITEM shared "${source}/publication/loopback.cpp" "${source}/assets/system_fonts.cpp")
+# The scenario player (performance evaluation runs) needs Qt's private GUI headers and is not part of a device build.
+list(FILTER shared EXCLUDE REGEX "/src/scenario/")
 file(GLOB adapters CONFIGURE_DEPENDS "*.cpp" "*.h")
 # The reader controller and start screen are portable; the desktop target compiles them from the same place.
 list(APPEND adapters "${KOBALT_ROOT}/platforms/android/reader.cpp" "${KOBALT_ROOT}/platforms/android/start_screen.cpp")

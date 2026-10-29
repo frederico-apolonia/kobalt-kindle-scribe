@@ -2,6 +2,7 @@
 #include <QSlider>
 #include <QVBoxLayout>
 #include <QVector>
+#include <QStringList>
 #include <functional>
 
 namespace kobalt::ui {
@@ -12,13 +13,15 @@ public:
     bool interacting() const {
         return tracking;
     }
-    enum class MarkerMode { Positions, Stops };
+    enum class MarkerMode { Positions, Stops, Checkpoints };
     void setDotMarkers(bool enabled) {
         dotMarkers = enabled;
         update();
     }
     // Stops are evenly spaced and snap pointer gestures. Buttons retain singleStep().
     void setMarkers(const QVector<int> &values, MarkerMode mode = MarkerMode::Positions);
+    // Checkpoints use equal spacing but allow values between the marks.
+    void setMarkerLabels(const QStringList &labels);
     void nudge(int steps);
 
 protected:
@@ -34,6 +37,7 @@ private:
     bool dotMarkers = false;
     int original = 0;
     QVector<int> markers;
+    QStringList markerLabels;
     MarkerMode markerMode = MarkerMode::Positions;
     int positionForValue(int value) const;
     void moveTo(qreal x);
@@ -72,5 +76,5 @@ private:
 SettingSlider *sliderRow(QWidget *parent, QVBoxLayout *rows, const char *name, const char *labelName,
                          const QString &label, const char *lessName, const char *moreName, int minimum, int maximum,
                          int step, std::function<void(int)> apply, const QString &prefix = {},
-                         const QString &suffix = {});
+                         const QString &suffix = {}, const QStringList &markerLabels = {});
 }

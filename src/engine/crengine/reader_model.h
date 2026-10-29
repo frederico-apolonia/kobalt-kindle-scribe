@@ -108,6 +108,11 @@ public:
         return fonts_;
     }
     static bool supportedArchive(const QByteArray &bytes, QString *error);
+    // The format of new page images in this process: Format_RGB32 (the
+    // default) or Format_RGBX8888. Choose the one that the screen's backing
+    // store can take without converting pixels. Pages drawn earlier keep
+    // their format. Qt before 5.9 cannot reinterpret an image and keeps RGB32.
+    static void setPageFormat(QImage::Format format);
     bool open(QByteArray bytes, QSize size, const QJsonObject &saved, QString *error, OpeningProgress progress = {});
     bool openResources(std::shared_ptr<ResourceCache> resources, const QMap<QString, qint64> &sizes, QSize size,
                        const QJsonObject &saved, QString *error, OpeningProgress progress = {},
@@ -263,7 +268,7 @@ public:
     QString author() const;
     // Decodes the host cover first, then the publication cover, within the
     // requested size and 4 million pixels. Empty means neither is usable.
-    QImage coverImage(QSize maximumSize, const QString &preferredPath = {}) const;
+    QImage coverImage(QSize maximumSize, const QString &preferredPath = {}, QString *usedPath = nullptr) const;
     QVector<ChapterLink> chapters() const;
     void setChapters(QVector<ChapterLink> contents, QVector<ChapterLink> graph);
     QVector<ChapterLink> chapterGraph() const;
@@ -328,7 +333,7 @@ private:
     QString defaultFace_ = defaultFontFace;
     std::array<QString, 3> fallbackFaces_;
     QString alignment_ = "left";
-    int pixels_ = defaultFontPixels(), spacing_ = defaultLineSpacing;
+    int pixels_ = defaultFontPixels(), spacing_ = defaultLineSpacing, paragraphSpacing_ = -1, paragraphIndent_ = -1;
     int margin_ = defaultMarginPixels(), topMargin_ = defaultVerticalMarginPixels(margin_),
         bottomMargin_ = defaultVerticalMarginPixels(margin_);
     void activateFontParameters() const;

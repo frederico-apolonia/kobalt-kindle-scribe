@@ -18,6 +18,11 @@ if(KOBALT_QT_MAJOR EQUAL 5)
     set_target_properties(Qt5::GuiPrivate PROPERTIES
         INTERFACE_INCLUDE_DIRECTORIES "${Qt5Gui_PRIVATE_INCLUDE_DIRS};${Qt5Core_PRIVATE_INCLUDE_DIRS}"
         INTERFACE_LINK_LIBRARIES Qt5::Gui)
+    # Reader styling stores style sheets the way Qt 6 does; see theme.cpp.
+    add_library(Qt5::WidgetsPrivate INTERFACE IMPORTED)
+    set_target_properties(Qt5::WidgetsPrivate PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${Qt5Widgets_PRIVATE_INCLUDE_DIRS}"
+        INTERFACE_LINK_LIBRARIES "Qt5::Widgets;Qt5::GuiPrivate")
     set(KOBALT_SYSTEM_FONT_DIRECTORY "/usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/fonts")
 else()
     set(KOBALT_SYSTEM_FONT_DIRECTORY "/usr/share/fonts")
@@ -75,6 +80,8 @@ string(APPEND embedded "{NULL, NULL, 0}};\n")
 file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/embedded_resources.h" CONTENT "${embedded}" @ONLY)
 
 file(GLOB_RECURSE shared CONFIGURE_DEPENDS "${source}/*.cpp" "${source}/*.h")
+# The scenario player is built only into evaluation packages.
+list(FILTER shared EXCLUDE REGEX "/src/scenario/")
 list(FILTER shared EXCLUDE REGEX "/(library|interfaces/library)/")
 file(GLOB adapters CONFIGURE_DEPENDS "common/*.cpp" "common/*.h" "qt${KOBALT_QT_MAJOR}/*.cpp" "qt${KOBALT_QT_MAJOR}/*.h" "display/*.cpp")
 add_library(kobalt MODULE ${shared} ${adapters} common/install.c "${hooks}/nh.c" "${hooks}/resources.c"
@@ -115,6 +122,17 @@ target_link_libraries(kobalt PRIVATE Qt${KOBALT_QT_MAJOR}::Widgets Qt${KOBALT_QT
     "${engine}" "${prefix}/lib/libharfbuzz.a" "${prefix}/lib/libxxhash.a" "${prefix}/lib/libutf8proc.a"
     "${prefix}/lib/libjpeg.a" "${prefix}/lib/liblunasvg.a" "${prefix}/lib/libfreetype.a"
     "${prefix}/lib/libfribidi.a" "${prefix}/lib/libunibreak.a" "${KOBALT_TEST_PNG}" z dl pthread)
+if(KOBALT_QT_MAJOR EQUAL 5)
+    target_link_libraries(kobalt PRIVATE Qt5::WidgetsPrivate)
+endif()
+# An evaluation package adds the scenario player, its scenario file, the test
+# books and the diagnostics switch. Release packages never contain them.
+option(KOBALT_EVAL_PACKAGE "Build the evaluation package" OFF)
+if(KOBALT_EVAL_PACKAGE)
+    target_sources(kobalt PRIVATE "${source}/scenario/player.cpp")
+    target_compile_definitions(kobalt PRIVATE KOBALT_SCENARIO_PLAYER)
+    set(package_suffix "-eval")
+endif()
 target_link_options(kobalt PRIVATE -Wl,--no-undefined
     "LINKER:--whole-archive,${prefix}/lib/libfreetype.a,--no-whole-archive"
     "LINKER:--exclude-libs,libharfbuzz.a:libjpeg.a:liblunasvg.a:libutf8proc.a:libfribidi.a:libunibreak.a:libfreetype.a")
@@ -122,7 +140,8 @@ target_link_options(kobalt PRIVATE -Wl,--no-undefined
 set(resources "${KOBALT_ROOT}/assets")
 file(GLOB notices CONFIGURE_DEPENDS "${resources}/notices/*")
 set(qrc "<RCC><qresource prefix=\"/kobalt\">")
-foreach(path "${resources}/acknowledgments.json" ${notices})
+foreach(path "${resources}/acknowledgments.json" ${notices}
+        "${resources}/samples/words-and-letters.html" "${resources}/samples/layout.html")
     file(RELATIVE_PATH alias "${resources}" "${path}")
     string(APPEND qrc "<file alias=\"${alias}\">${path}</file>")
 endforeach()
@@ -134,12 +153,14 @@ else()
     qt6_add_resources(compiled_resources "${CMAKE_CURRENT_BINARY_DIR}/notices.qrc")
 endif()
 target_sources(kobalt PRIVATE ${compiled_resources})
-set(package_file "${CMAKE_CURRENT_BINARY_DIR}/Kobalt-qt${KOBALT_QT_MAJOR}.zip")
+set(package_file "${CMAKE_CURRENT_BINARY_DIR}/Kobalt-qt${KOBALT_QT_MAJOR}${package_suffix}.zip")
 add_custom_command(OUTPUT "${package_file}"
     COMMAND "${CMAKE_COMMAND}" "-DLIBRARY=$<TARGET_FILE:kobalt>" "-DSTRIP=${CMAKE_STRIP}"
-        "-DASSETS=${KOBALT_ASSETS}" "-DQT_MAJOR=${KOBALT_QT_MAJOR}"
+        "-DASSETS=${KOBALT_ASSETS}" "-DQT_MAJOR=${KOBALT_QT_MAJOR}" "-DOUTPUT=${package_file}"
+        "-DEVAL=${KOBALT_EVAL_PACKAGE}" "-DROOT=${KOBALT_ROOT}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/package.cmake"
-    DEPENDS kobalt ${asset_inputs} "${CMAKE_CURRENT_SOURCE_DIR}/package.cmake" VERBATIM)
+    DEPENDS kobalt ${asset_inputs} "${CMAKE_CURRENT_SOURCE_DIR}/package.cmake"
+        "${KOBALT_ROOT}/platforms/eval/scenarios.json" VERBATIM)
 add_custom_target(package DEPENDS "${package_file}")
 
 add_custom_target(check-package

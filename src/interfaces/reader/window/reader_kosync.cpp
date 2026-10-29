@@ -2,9 +2,7 @@
 #include "support/strings.h"
 #include "support/diagnostics.h"
 #include <QTimer>
-#include <QHBoxLayout>
-#include <QStyle>
-#include "interfaces/reader/ui/style/styles.h"
+#include "interfaces/reader/views/kosync_notice.h"
 #include <utility>
 #include <QLocale>
 
@@ -16,6 +14,7 @@ void Reader::kosyncStatus(const QString &message) {
     kosyncMessage = message;
     kosyncPage->setLastSync(kosyncClient->lastSync());
     kosyncPage->setStatus(message, kosyncClient->busy() || kosyncConnecting || kosyncAuthenticating || bool(kosyncReaderReady));
+    updateKosyncToolbar();
     if (general->isVisible() && !lifecycleHidden && !closing && !exportRunning) {
         fitSettings();
         refresh();
@@ -23,15 +22,25 @@ void Reader::kosyncStatus(const QString &message) {
 }
 void Reader::buildKosync() {
     kosyncClient = std::make_unique<kosync::Client>(book->paths().syncAccount());
-    if (services.syncNetwork) kosyncNetwork = services.syncNetwork();
+    if (kosyncClient->signedIn() && !book->usesNativeCloudSync() && services.syncNetwork)
+        kosyncNetwork = services.syncNetwork();
     kosyncClient->setDefaultDeviceName(services.deviceName.isEmpty() ? QStringLiteral("Kobalt")
                                                                  : services.deviceName + QStringLiteral(" (Kobalt)"));
     kosyncPage->setNativeCloudSync(book->usesNativeCloudSync());
+    kosyncTimer.setParent(this);
+    kosyncTimer.setObjectName("rrKosyncTimer");
+    kosyncTimer.setInterval(30000);
+    connect(&kosyncTimer, &QTimer::timeout, this, [this] { synchronizeKosync(); });
     const auto account = [this] {
         kosyncPage->setFilenameMatching(kosyncClient->filenameMatching());
         kosyncPage->setDeviceName(kosyncClient->customDeviceName(), kosyncClient->defaultDeviceName());
         kosyncPage->setAccount(kosyncClient->server(), kosyncClient->username(), kosyncClient->signedIn(),
                                kosyncClient->automatic());
+        if (kosyncClient->signedIn() && kosyncAutomatic() && !book->usesNativeCloudSync())
+            kosyncTimer.start();
+        else
+            kosyncTimer.stop();
+        updateKosyncToolbar();
     };
     account();
     kosyncPage->filenameMatchingChanged = [this](bool enabled) {
@@ -96,6 +105,7 @@ void Reader::buildKosync() {
         if (!kosyncClient->setAutomatic(enabled)) kosyncStatus(strings::get("kosync.storage_error"));
         account();
         if (enabled) kosyncStarted = false;
+        kosyncStatus(kosyncMessage);
     };
     kosyncPage->syncRequested = [this] { synchronizeKosync(true); };
     const auto status = book->usesNativeCloudSync() ? strings::get("kosync.native_sync")
@@ -124,14 +134,51 @@ void Reader::buildKosync() {
     connect(&kosyncReaderRetry, &QTimer::timeout, this, [this] {
         if (kosyncReaderReady) continueKosyncWhenReady(std::move(kosyncReaderReady));
     });
-    kosyncTimer.setParent(this);
-    kosyncTimer.setObjectName("rrKosyncTimer");
-    kosyncTimer.setInterval(30000);
-    connect(&kosyncTimer, &QTimer::timeout, this, [this] { synchronizeKosync(); });
-    kosyncTimer.start();
+}
+void Reader::updateKosyncToolbar() {
+    if (!toolbarComposition.sync || !kosyncClient) return;
+    toolbarComposition.sync->setVisible(kosyncClient->signedIn() && !kosyncClient->automatic() && !book->usesNativeCloudSync());
+    toolbarComposition.sync->setEnabled(!kosyncClient->busy() && !kosyncConnecting && !kosyncAuthenticating && !kosyncReaderReady);
+}
+void Reader::requestManualKosync() {
+    if (!kosyncClient->signedIn() || kosyncClient->automatic() || book->usesNativeCloudSync() || kosyncDialog) return;
+    if (!kosyncClient->manualExplanation()) {
+        synchronizeKosync(true);
+        return;
+    }
+    auto *dialog = new ui::ChoiceModal(this,
+        {strings::get("kosync.manual_prompt_description"), strings::get("kosync.manual_prompt"), {}},
+        {strings::get("common.cancel"), "rrKosyncManualCancel"},
+        {strings::get("kosync.sync_now"), "rrKosyncManualConfirm"});
+    dialog->setObjectName("rrKosyncManualPrompt");
+    kosyncDialog = dialog;
+    const auto dismiss = [this, dialog] {
+        dialog->hide();
+        dialog->deleteLater();
+        kosyncDialog = nullptr;
+        refresh();
+    };
+    connect(dialog->secondaryButton(), &QPushButton::clicked, this, dismiss);
+    dialog->dismissed = dismiss;
+    connect(dialog->primaryButton(), &QPushButton::clicked, this, [this, dismiss] {
+        dismiss();
+        const bool saved = kosyncClient->setManualExplanation(false);
+        if (!saved) {
+            kosyncStatus(strings::get("kosync.storage_error"));
+            refresh();
+            page->notice = kosyncMessage;
+            page->update();
+            return;
+        }
+        synchronizeKosync(true);
+    });
+    dialog->show();
+    dialog->raise();
+    dialog->fitCard();
+    refresh();
 }
 void Reader::prepareKosyncPresentation(std::function<void(bool)> finished) {
-    if (kosyncStarted || book->usesNativeCloudSync() || !kosyncClient->signedIn() || !kosyncClient->automatic() ||
+    if (kosyncStarted || book->usesNativeCloudSync() || !kosyncClient->signedIn() || !kosyncAutomatic() ||
         book->pendingProgress() || book->deviceTransition() || model->pages() <= 0 || model->temporaryTypography()) {
         finished(true);
         return;
@@ -157,7 +204,7 @@ void Reader::synchronizeKosync(bool interactive) {
         return;
     }
     if (kosyncProgress.pending()) {
-        if (!interactive && !kosyncClient->automatic()) return;
+        if (!interactive && !kosyncAutomatic()) return;
         if (interactive) {
             kosyncPositionFailed = false;
             kosyncStatus(strings::get("kosync.pending"));
@@ -166,7 +213,7 @@ void Reader::synchronizeKosync(bool interactive) {
         showKosyncChoice();
         return;
     }
-    if (!kosyncClient->signedIn() || (!interactive && !kosyncClient->automatic()) || kosyncClient->busy() ||
+    if (!kosyncClient->signedIn() || (!interactive && !kosyncAutomatic()) || kosyncClient->busy() ||
         kosyncConnecting || kosyncAuthenticating || kosyncReaderReady ||
         kosyncDialog || closing || lifecycleHidden || exportRunning ||
         services.suspended() || book->deviceTransition() || book->pendingProgress() || (!interactive && model->busy()) || model->temporaryTypography() ||
@@ -187,14 +234,23 @@ void Reader::synchronizeKosync(bool interactive) {
     else startKosyncExchange(false);
 }
 void Reader::prepareKosyncNetwork(bool interactive, std::function<void()> ready) {
+    if (!kosyncNetwork && services.syncNetwork) kosyncNetwork = services.syncNetwork();
     if (!kosyncNetwork) { ready(); return; }
     const auto epoch = kosyncEpoch;
     kosyncConnecting = true;
     kosyncStatus(strings::get("kosync.connecting"));
-    kosyncNetwork->prepare(interactive, [this, epoch, ready](bool connected) {
+    kosyncNetwork->prepare(interactive, [this, epoch, ready, interactive](bool connected) {
         if (epoch != kosyncEpoch) return;
         kosyncConnecting = false;
-        if (!connected) { finishKosync(strings::get("kosync.network_error")); return; }
+        if (!connected) {
+            const auto message = strings::get("kosync.network_error");
+            finishKosync(message);
+            if (interactive && !general->isVisible() && !closing && !lifecycleHidden) {
+                page->notice = message;
+                page->update();
+            }
+            return;
+        }
         ready();
     });
 }
@@ -208,40 +264,7 @@ void Reader::hideKosyncOpening() {
     }
 }
 void Reader::showKosyncOpening() {
-    auto *dialog = new ui::NoticeModal(this,
-        {strings::get("kosync.opening_description"), strings::get("kosync.opening"), {}},
-        {strings::get("kosync.cancel_sync"), "rrKosyncCancel"});
-    auto *card = dialog->card();
-    auto *title = card->findChild<QLabel *>("rrModalTitle");
-    const int index = card->rows()->indexOf(title);
-    card->rows()->removeWidget(title);
-    auto *heading = new ui::Panel(card);
-    dialog->descriptionLabel()->setAlignment(Qt::AlignCenter);
-    auto *row = new QHBoxLayout(heading);
-    const auto padding = ui::metrics::notice::cardMargins;
-    row->setContentsMargins(padding.left(), padding.top(), padding.right(), 0);
-    row->setSpacing(ui::px(20));
-    row->addStretch(1);
-    auto *icon = new QLabel(heading);
-    icon->setObjectName("rrKosyncStatusIcon");
-    const int size = ui::px(48);
-    icon->setFixedSize(size, size);
-    icon->setPixmap(ui::controlIcon(ui::ControlIcon::Sync, ui::darkTheme(this) ? QColor(Qt::white) : QColor(Qt::black)).pixmap(size, size));
-    row->addWidget(icon, 0, Qt::AlignVCenter);
-    // The heading and description share one content block above the action.
-    title->setProperty("reader_modal_content", false);
-    title->setProperty("reader_modal_heading", false);
-    title->style()->unpolish(title);
-    title->style()->polish(title);
-    title->setMinimumHeight(0);
-    title->setMaximumHeight(QWIDGETSIZE_MAX);
-    row->addWidget(title);
-    row->addStretch(1);
-    card->rows()->insertWidget(index, heading);
-    auto *cancel = dialog->primaryButton();
-    cancel->setProperty("reader_primary_action", false);
-    ui::readerStyle(cancel, "QPushButton{border:none;padding:0;min-height:0;font-weight:400;" +
-                            ui::styles::font(ui::metrics::chrome::labelText) + "}");
+    auto *dialog = new KosyncNotice(this);
     kosyncOpening = true;
     kosyncDialog = dialog;
     dialog->setObjectName("rrKosyncOpening");
@@ -252,6 +275,11 @@ void Reader::showKosyncOpening() {
     };
     connect(dialog->primaryButton(), &QPushButton::clicked, this, skip);
     dialog->dismissed = skip;
+    dialog->completed = [this, dialog] {
+        if (kosyncDialog != dialog) return;
+        hideKosyncOpening();
+        refresh();
+    };
     dialog->show();
     dialog->raise();
     dialog->fitCard();
@@ -285,13 +313,18 @@ void Reader::finishKosync(const QString &message) {
     kosyncConnecting = kosyncAuthenticating = false;
     const bool finishing = kosyncFinishing;
     const bool opening = kosyncOpening;
-    hideKosyncOpening();
+    auto *notice = dynamic_cast<KosyncNotice *>(kosyncDialog.data());
+    const bool showSuccess = !finishing && !closing && !lifecycleHidden && !exportRunning &&
+        notice && notice->isVisible() && message == strings::get("kosync.up_to_date");
+    if (showSuccess) notice->complete();
+    else hideKosyncOpening();
     kosyncDeadline.stop();
     kosyncFinishing = false;
     auto finished = std::move(kosyncFinished);
     kosyncFinished = {};
     kosyncMessage = message;
     kosyncPage->setStatus(message, false);
+    updateKosyncToolbar();
     if (!finishing && !closing && !lifecycleHidden && !exportRunning) {
         if (opening && message != strings::get("kosync.up_to_date") && message != strings::get("kosync.pending"))
             page->notice = message;
@@ -306,7 +339,7 @@ void Reader::flushKosync(std::function<void()> finished) {
     // connection and never resolve a remote conflict while closing or asleep.
     if (kosyncConnecting || kosyncAuthenticating || kosyncReaderReady) cancelKosync();
     if ((kosyncNetwork && !kosyncNetwork->connected()) ||
-        book->usesNativeCloudSync() || !kosyncClient->signedIn() || !kosyncClient->automatic() ||
+        book->usesNativeCloudSync() || !kosyncClient->signedIn() || !kosyncAutomatic() ||
         kosyncProgress.pending() || book->pendingProgress() || model->temporaryTypography() ||
         model->pages() <= 0 || kosyncDocument().isEmpty() ||
         model->state().value("position").toString().isEmpty()) {
@@ -442,6 +475,7 @@ void Reader::showKosyncChoice() {
                 // writes blocked until the user explicitly keeps local progress.
                 kosyncPositionFailed = true;
                 kosyncClient->setAutomatic(false);
+                updateKosyncToolbar();
                 kosyncPage->setAccount(kosyncClient->server(), kosyncClient->username(), true, kosyncClient->automatic());
             }
             page->notice = error.isEmpty() ? strings::get("kosync.resumed") : error;

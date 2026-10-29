@@ -247,7 +247,7 @@ BatteryStatus batteryStatus() {
 ReaderHostServices readerServices(std::shared_ptr<LightDevice> light, const HostWidgets &widgets) {
     ReaderHostServices result;
     // The reader's back button returns to Kobalt's library; the library's More menu leaves the application.
-    result.exitLabel = strings::get("library.title");
+    result.backButtonLabel = strings::get("library.title");
     // The Amazon screen saver is not available while Kobalt runs: the first choice leaves the page as it is.
     // The Scribe's page is 4.6 million pixels, a little above the default cap.
     result.maxSleepPixels = 6 * 1024 * 1024;

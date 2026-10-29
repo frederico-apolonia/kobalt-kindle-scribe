@@ -16,6 +16,7 @@
 #include <QVariant>
 #include "platform/api/kobo_refresh.h"
 #include <QPainter>
+#include <QPointer>
 #include <QtMath>
 #include <QTransform>
 #include <QTouchEvent>
@@ -28,6 +29,46 @@ namespace kobalt {
 namespace m = ui::metrics;
 using platform::textRefresh;
 namespace {
+// Resolve overlapping targets once when reveal mode changes. Keep the outer
+// ellipse as a vector path so its edge remains smooth.
+QPainterPath footnoteOutline(const QRect &reference, const QVector<QRect> &rectangles,
+                             const QVector<QRect> &footnotes, int padding) {
+    QPainterPath circle;
+    const auto target = footnoteTarget(reference, padding);
+    circle.addEllipse(target);
+    QVector<PageLink> neighbors;
+    int own = -1;
+    for (const auto &rect : rectangles) {
+        const bool note = footnotes.contains(rect);
+        if (rect == reference)
+            own = neighbors.size();
+        else if (!QRectF(rect).intersects(target) &&
+                 !(note && footnoteTarget(rect, padding).intersects(target)))
+            continue;
+        neighbors.append({{}, {rect}, note ? LinkKind::Footnote : LinkKind::Passage});
+    }
+    if (neighbors.size() <= 1 || own < 0)
+        return circle;
+    QRegion excluded;
+    const auto bounds = target.toAlignedRect();
+    for (int y = bounds.top(); y <= bounds.bottom(); ++y) {
+        int start = -1;
+        for (int x = bounds.left(); x <= bounds.right() + 1; ++x) {
+            const int winner = x <= bounds.right()
+                                   ? linkAtPoint(neighbors, QPoint(x, y), "all", padding).index : -1;
+            const bool lost = winner >= 0 && winner != own;
+            if (lost && start < 0)
+                start = x;
+            else if (!lost && start >= 0) {
+                excluded += QRect(start, y, x - start, 1);
+                start = -1;
+            }
+        }
+    }
+    QPainterPath cut;
+    cut.addRegion(excluded);
+    return circle.subtracted(cut);
+}
 using headerfooter::Content;
 using headerfooter::Field;
 // The battery sits beside the text at a little below the text height.
@@ -157,13 +198,12 @@ int ReadingPage::bottomHeight() const {
     return (showFooter() ? m::reading::stripHeight(chrome.footerSize) : 0) +
            (showProgress() ? ui::metrics::reading::progressHeight : 0);
 }
-// Strip text keeps the Small strip's distance from the page edge at every
-// size: it is centred in a band as tall as that strip, at the edge. A larger
-// strip only adds space between its text and the book.
+// Keep the old edge alignment through Large. Larger sizes grow the text
+// band as well as the reserved strip so glyphs are not clipped.
 QRect ReadingPage::headerTextRect() const {
     if (!showHeader())
         return {};
-    return {0, 0, width(), m::reading::stripHeight(QStringLiteral("small"))};
+    return {0, 0, width(), m::reading::textBandHeight(chrome.headerSize)};
 }
 QRect ReadingPage::footerTextRect() const {
     if (!showFooter())
@@ -173,12 +213,13 @@ QRect ReadingPage::footerTextRect() const {
     const int offset = showProgress() ? int(m::reading::progressHeight) - int(m::reading::progressBottom) -
                                             int(m::reading::progressFillHeight)
                                       : 0;
-    const int band = m::reading::stripHeight(QStringLiteral("small"));
+    const int band = m::reading::textBandHeight(chrome.footerSize);
     const int bottom = height() - bottomHeight() + offset + m::reading::stripHeight(chrome.footerSize);
     return {0, bottom - band, width(), band};
 }
 
 void ReadingPage::cancelHold() {
+    clearRevealedPress();
     cancelAnimation();
     window()->setProperty("reader_animation_direction", 0);
     animationDirection = 0;
@@ -192,9 +233,12 @@ void ReadingPage::cancelHold() {
         lightFinished(false);
 }
 
-void ReadingPage::revealLinks(const QVector<QRect> &rectangles) {
-    if (revealedLinks == rectangles)
+void ReadingPage::revealLinks(const QVector<QRect> &rectangles, const QVector<QRect> &footnotes) {
+    if (revealedLinks == rectangles && revealedFootnotes == footnotes)
         return;
+    cancelHold();
+    const bool circlesChanged = revealedFootnotes != footnotes;
+    revealedFootnotes = footnotes;
     QRegion dirty;
     for (const auto &outline : revealedOutlines)
         dirty += outline;
@@ -204,24 +248,32 @@ void ReadingPage::revealLinks(const QVector<QRect> &rectangles) {
     // links on consecutive lines, as in a contents page, keep separate outlines.
     const int pad = m::links::revealPadding, gap = m::links::revealGap;
     revealedOutlines.clear();
-    for (const auto &r : rectangles)
+    revealedCircles.clear();
+    QVector<QRect> ordinary;
+    for (const auto &r : rectangles) {
+        if (footnotes.contains(r))
+            revealedCircles.append(footnoteOutline(r, rectangles, footnotes, pad));
+        else
+            ordinary.append(r);
+    }
+    for (const auto &r : ordinary)
         revealedOutlines += r.adjusted(-pad, -pad, pad, pad);
-    for (int i = 0; i < rectangles.size(); ++i)
-        for (int j = i + 1; j < rectangles.size(); ++j) {
+    for (int i = 0; i < ordinary.size(); ++i)
+        for (int j = i + 1; j < ordinary.size(); ++j) {
             if (!revealedOutlines[i].intersects(revealedOutlines[j]))
                 continue;
-            const QRect &a = rectangles[i], &b = rectangles[j];
+            const QRect &a = ordinary[i], &b = ordinary[j];
             const int shared = qMin(a.bottom(), b.bottom()) - qMax(a.top(), b.top());
             const bool sameLine = 2 * shared > qMin(a.height(), b.height());
             const int first = (sameLine ? a.left() <= b.left() : a.top() <= b.top()) ? i : j,
                       second = first == i ? j : i;
             auto &before = revealedOutlines[first], &after = revealedOutlines[second];
             if (sameLine) {
-                const int middle = (rectangles[first].right() + rectangles[second].left()) / 2;
+                const int middle = (ordinary[first].right() + ordinary[second].left()) / 2;
                 before.setRight(qMin(before.right(), middle - gap / 2));
                 after.setLeft(qMax(after.left(), middle + gap - gap / 2));
             } else {
-                const int middle = (rectangles[first].bottom() + rectangles[second].top()) / 2;
+                const int middle = (ordinary[first].bottom() + ordinary[second].top()) / 2;
                 before.setBottom(qMin(before.bottom(), middle - gap / 2));
                 after.setTop(qMax(after.top(), middle + gap - gap / 2));
             }
@@ -229,7 +281,7 @@ void ReadingPage::revealLinks(const QVector<QRect> &rectangles) {
     // Showing or hiding the outlines repaints the whole page as one rectangle:
     // MediaTek refreshes each page rectangle on its own, which would flash
     // once per link. A change between two sets of links repaints only their outlines.
-    if (rectangles.isEmpty() == wereShown) {
+    if (circlesChanged || !footnotes.isEmpty() || rectangles.isEmpty() == wereShown) {
         update();
         return;
     }
@@ -237,6 +289,36 @@ void ReadingPage::revealLinks(const QVector<QRect> &rectangles) {
         dirty += outline;
     if (!dirty.isEmpty())
         update(dirty.translated(0, topHeight()));
+}
+
+void ReadingPage::clearRevealedPress() {
+    if (revealedPress.isEmpty())
+        return;
+    const auto dirty = revealedPress.boundingRect().toAlignedRect().adjusted(-2, -2, 2, 2);
+    revealedPress = {};
+    update(dirty.translated(0, topHeight()));
+}
+
+void ReadingPage::pressRevealedLink(QPoint point) {
+    if (point.y() < 0 || point.y() >= height() - topHeight() - bottomHeight())
+        return;
+    QVector<PageLink> links;
+    for (const auto &rect : revealedLinks)
+        links.append({{}, {rect}, revealedFootnotes.contains(rect) ? LinkKind::Footnote : LinkKind::Passage});
+    const auto hit = linkAtPoint(links, point, "all", int(m::links::revealPadding), ui::px(6));
+    if (hit.index < 0)
+        return;
+    const int note = revealedFootnotes.indexOf(hit.bounds);
+    if (note >= 0)
+        revealedPress = revealedCircles[note];
+    else {
+        int ordinary = 0;
+        for (int i = 0; i < hit.index; ++i)
+            if (!revealedFootnotes.contains(revealedLinks[i]))
+                ++ordinary;
+        revealedPress.addRect(revealedOutlines[ordinary]);
+    }
+    update(revealedPress.boundingRect().toAlignedRect().adjusted(-2, -2, 2, 2).translated(0, topHeight()));
 }
 
 QRegion ReadingPage::annotationContour(const QVector<QRect> &rectangles, bool vertical) {
@@ -462,18 +544,23 @@ ReadingPage::ReadingPage(QWidget *parent, std::function<void()> cancelAnimation)
     textRefresh(this);
     holdTimer.setSingleShot(true);
     holdTimer.setInterval(m::lookup::holdMilliseconds);
-    connect(&holdTimer, &QTimer::timeout, this, [this] {
-        if (!tracking || moved)
-            return;
-        consumed = true;
-        brightnessGesture.cancel();
-        if (annotationInputEnabled && annotationDragStarted) {
-            annotationDragging = annotationDragStarted(origin.toPoint() - QPoint(0, topHeight()), -1);
-            return;
-        }
-        if (held)
-            held(origin.toPoint() - QPoint(0, topHeight()));
-    });
+    connect(&holdTimer, &QTimer::timeout, this, [this] { triggerHold(); });
+}
+
+void ReadingPage::triggerHold() {
+    if (!tracking || moved || consumed || !revealedLinks.isEmpty())
+        return;
+    consumed = true;
+    brightnessGesture.cancel();
+    if (annotationInputEnabled && annotationDragStarted) {
+        QPointer<ReadingPage> guard(this);
+        const bool dragging = annotationDragStarted(origin.toPoint() - QPoint(0, topHeight()), -1);
+        if (guard)
+            annotationDragging = dragging;
+        return;
+    }
+    if (held)
+        held(origin.toPoint() - QPoint(0, topHeight()));
 }
 
 void ReadingPage::cleanRefresh(bool clean) {
@@ -627,6 +714,25 @@ void ReadingPage::paintContents(QPainter &painter, bool sleeping) const {
         if (handle.visible)
             painter.drawEllipse(handle.center, int(m::selection::handleRadius), int(m::selection::handleRadius));
     painter.restore();
+    if (!revealedCircles.isEmpty()) {
+        painter.save();
+        painter.setClipRect(QRect(0, topHeight(), width(), height() - topHeight() - bottomHeight()));
+        painter.translate(0, topHeight());
+        painter.setRenderHint(QPainter::Antialiasing);
+        QPainterPath fill;
+        fill.setFillRule(Qt::WindingFill);
+        for (const auto &circle : revealedCircles)
+            fill.addPath(circle);
+        const bool dark = ui::darkTheme(this);
+        painter.setCompositionMode(dark ? QPainter::CompositionMode_Screen : QPainter::CompositionMode_Multiply);
+        painter.fillPath(fill, ui::themeColors(dark).pressedPaper);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+        painter.setPen(QPen(palette().color(QPalette::WindowText), int(m::links::revealOutline)));
+        painter.setBrush(Qt::NoBrush);
+        for (const auto &circle : revealedCircles)
+            painter.drawPath(circle);
+        painter.restore();
+    }
     if (!revealedOutlines.isEmpty()) {
         QRegion linkRegion;
         for (const auto &r : revealedOutlines)
@@ -644,6 +750,16 @@ void ReadingPage::paintContents(QPainter &painter, bool sleeping) const {
             ui::paintEdges(painter, r.translated(0, topHeight()),
                            ui::Edges(Qt::TopEdge) | Qt::BottomEdge | Qt::LeftEdge | Qt::RightEdge,
                            palette().color(QPalette::WindowText), outline);
+    }
+    if (!revealedPress.isEmpty()) {
+        painter.save();
+        painter.setClipRect(QRect(0, topHeight(), width(), height() - topHeight() - bottomHeight()));
+        painter.translate(0, topHeight());
+        painter.setRenderHint(QPainter::Antialiasing);
+        const bool dark = ui::darkTheme(this);
+        painter.setCompositionMode(dark ? QPainter::CompositionMode_Screen : QPainter::CompositionMode_Multiply);
+        painter.fillPath(revealedPress, dark ? QColor(65, 65, 65) : QColor(190, 190, 190));
+        painter.restore();
     }
     painter.save();
     painter.setCompositionMode(QPainter::CompositionMode_Difference);
@@ -718,7 +834,7 @@ bool ReadingPage::annotationTouchEvent(QTouchEvent *event) {
         const bool request = annotationTouch;
         multipleTouch = annotationTouch = false;
         touchOrigins.clear();
-        if (request && annotationRequested) {
+        if (request && revealedLinks.isEmpty() && annotationRequested) {
             annotationRequested();
         }
     }
@@ -735,7 +851,7 @@ bool ReadingPage::event(QEvent *event) {
         const auto points = kobalt::ui::touchPositions(static_cast<QTouchEvent *>(event));
         if (event->type() == QEvent::TouchBegin) {
             if (points.size() == 1)
-                beginPointer(points.first());
+                beginPointer(points.first(), static_cast<QTouchEvent *>(event));
             else
                 cancelHold();
         }
@@ -747,8 +863,14 @@ bool ReadingPage::event(QEvent *event) {
         }
         if (!tracking || moved)
             holdTimer.stop();
-        if (event->type() == QEvent::TouchEnd)
+        if (event->type() == QEvent::TouchEnd) {
+            QPointer<ReadingPage> guard(this);
+            if (holdTimer.finish(static_cast<QTouchEvent *>(event)))
+                triggerHold();
+            if (!guard)
+                return true;
             finishGesture();
+        }
         event->accept();
         return true;
     }
@@ -762,11 +884,15 @@ bool ReadingPage::event(QEvent *event) {
     return QWidget::event(event);
 }
 
-void ReadingPage::beginPointer(QPointF point) {
+void ReadingPage::beginPointer(QPointF point, const QInputEvent *event) {
     cancelHold();
     tracking = true;
     moved = consumed = false;
     origin = latest = point;
+    if (!revealedLinks.isEmpty()) {
+        pressRevealedLink(point.toPoint() - QPoint(0, topHeight()));
+        return;
+    }
     annotationDragOffset = {};
     annotationPointerBoundary = -1;
     if (annotationInputEnabled) {
@@ -792,11 +918,11 @@ void ReadingPage::beginPointer(QPointF point) {
         }
     }
     brightnessGesture.begin(origin, size(), brightnessEdge, warmthEdge);
-    holdTimer.start();
+    holdTimer.start(event);
 }
 
 void ReadingPage::mousePressEvent(QMouseEvent *event) {
-#ifdef Q_OS_MAC
+#if defined(Q_OS_MAC) || defined(KOBALT_DESKTOP_POINTER)
     if (ui::isPointerMouse(event) && event->button() == Qt::RightButton) {
         cancelHold();
         origin = ui::mousePosition(event);
@@ -809,11 +935,11 @@ void ReadingPage::mousePressEvent(QMouseEvent *event) {
     rightPressed = false;
     if (!kobalt::ui::isPointerMouse(event) || event->button() != Qt::LeftButton)
         return;
-    beginPointer(kobalt::ui::mousePosition(event));
+    beginPointer(kobalt::ui::mousePosition(event), event);
 }
 
 void ReadingPage::mouseMoveEvent(QMouseEvent *event) {
-#ifdef Q_OS_MAC
+#if defined(Q_OS_MAC) || defined(KOBALT_DESKTOP_POINTER)
     if (rightPressed && ui::isPointerMouse(event)) {
         rightMoved |= event->buttons() != Qt::RightButton ||
                       (ui::mousePosition(event) - origin).manhattanLength() > m::lookup::moveTolerance;
@@ -828,12 +954,12 @@ void ReadingPage::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void ReadingPage::mouseReleaseEvent(QMouseEvent *event) {
-#ifdef Q_OS_MAC
+#if defined(Q_OS_MAC) || defined(KOBALT_DESKTOP_POINTER)
     if (ui::isPointerMouse(event) && event->button() == Qt::RightButton) {
         const bool request = rightPressed && !rightMoved && event->buttons() == Qt::NoButton &&
                              (ui::mousePosition(event) - origin).manhattanLength() <= m::lookup::moveTolerance;
         rightPressed = false;
-        if (request && annotationRequested) {
+        if (request && revealedLinks.isEmpty() && annotationRequested) {
             annotationRequested();
         }
         event->accept();
@@ -845,6 +971,11 @@ void ReadingPage::mouseReleaseEvent(QMouseEvent *event) {
         return;
     latest = kobalt::ui::mousePosition(event);
     updatePointer();
+    QPointer<ReadingPage> guard(this);
+    if (holdTimer.finish(event))
+        triggerHold();
+    if (!guard)
+        return;
     finishGesture();
 }
 
@@ -941,6 +1072,11 @@ void ReadingPage::paintFooter(QPainter &painter, bool sleeping) const {
 
 void ReadingPage::updatePointer() {
     moved |= (latest - origin).manhattanLength() > m::lookup::moveTolerance;
+    if (!revealedLinks.isEmpty()) {
+        if (moved)
+            clearRevealedPress();
+        return;
+    }
     if (moved)
         holdTimer.stop();
     if (annotationInputEnabled && annotationPointerBoundary >= 0 && !annotationDragging && !consumed && moved &&
@@ -976,6 +1112,12 @@ void ReadingPage::finishGesture() {
     if (!tracking)
         return;
     tracking = false;
+    if (!revealedLinks.isEmpty()) {
+        clearRevealedPress();
+        if (!moved && !consumed && tapped)
+            tapped(origin.toPoint());
+        return;
+    }
     if (std::exchange(annotationDragging, false)) {
         brightnessGesture.cancel();
         if (annotationDragFinished)

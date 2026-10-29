@@ -25,12 +25,13 @@ class PageScrubber;
 struct ToolbarComposition {
     ui::Panel *panel = nullptr;
     QLayout *rows = nullptr;
-    QPushButton *exitAction = nullptr, *settings = nullptr, *bookmarks = nullptr, *annotate = nullptr;
+    QWidget *exitAction = nullptr;
+    QPushButton *settings = nullptr, *bookmarks = nullptr, *annotate = nullptr;
     QLabel *clock = nullptr, *session = nullptr, *battery = nullptr;
     ui::BluetoothIndicator *bluetooth = nullptr;
     ui::WifiIndicator *wifi = nullptr;
     QPushButton *formattingWarning = nullptr;
-    QPushButton *search = nullptr;
+    QPushButton *search = nullptr, *sync = nullptr;
 };
 enum class NavigationDestination { Chapters, Seek, Text, Layout, Light, Stats, Search };
 struct NavigationState {
@@ -127,8 +128,9 @@ private:
     ui::BluetoothIndicator *bluetooth;
     ui::WifiIndicator *wifi;
     QPushButton *formattingWarning;
-    QPushButton *search;
-    QString searchStyle;
+    QPushButton *search, *sync;
+    QString searchStyle, syncStyle;
+    ui::ButtonPaintMode syncPaint = ui::ButtonPaintMode::Native;
     ui::ButtonPaintMode searchPaint = ui::ButtonPaintMode::Native;
     QString sessionStyle, settingsStyle, bookmarksStyle, annotateStyle, formattingWarningStyle;
     ui::ButtonPaintMode annotatePaint = ui::ButtonPaintMode::Native;

@@ -11,9 +11,9 @@
 #include "reading/page_navigation.h"
 #include "support/diagnostics.h"
 #include "interfaces/reader/ui/style/metrics.h"
+#include "interfaces/reader/ui/panel_timing.h"
 #include "storage/reader_storage.h"
 #include "interfaces/reader/settings/settings_panel.h"
-#include "font_registration.h"
 #include "assets/bundled_fonts.h"
 #include <QFontDatabase>
 
@@ -63,8 +63,10 @@ kobalt::headerfooter::Layout Reader::customChrome() const {
 bool Reader::customModified() const {
     using namespace kobalt::headerfooter;
     const auto saved = preferences.value(customKey);
-    return saved.isObject() &&
-           fromJson(saved.toObject(), presetLayout(Preset::Default)) != presetLayout(Preset::Default);
+    const auto standard = presetLayout(Preset::Default);
+    const auto custom = fromJson(saved.toObject(), standard);
+    return saved.isObject() && (custom.slotFields != standard.slotFields || custom.uppercase != standard.uppercase ||
+                                custom.progressBar != standard.progressBar);
 }
 
 bool Reader::chromeTicks() const {
@@ -96,8 +98,11 @@ void Reader::loadChrome() {
     header->setVisible(page->topHeight() > 0);
 }
 
-bool Reader::saveChrome(kobalt::headerfooter::Preset preset, const kobalt::headerfooter::Layout *custom) {
+bool Reader::saveChrome(kobalt::headerfooter::Preset preset, const kobalt::headerfooter::Layout *custom,
+                        const kobalt::headerfooter::Layout *text) {
     auto next = preferences;
+    if (text || !next.value(kobalt::headerfooter::textKey).isObject())
+        next[kobalt::headerfooter::textKey] = kobalt::headerfooter::textSettings(text ? *text : page->chrome);
     next[kobalt::headerfooter::presetKey] = kobalt::headerfooter::presetValue(preset);
     if (custom)
         next[kobalt::headerfooter::customKey] = kobalt::headerfooter::toJson(*custom);
@@ -129,14 +134,15 @@ void Reader::syncChromeControls() {
     const auto custom = customChrome();
     const bool modified = customModified();
     for (auto *card : presetCards) {
-        card->setLayout(card->preset() == Preset::Custom ? custom : presetLayout(card->preset()));
+        auto configuration = card->preset() == Preset::Custom ? custom : presetLayout(card->preset());
+        configuration.headerSize = configuration.footerSize = smallSize;
+        configuration.headerEnabled = configuration.footerEnabled = true;
+        card->setLayout(configuration);
         card->setModified(card->preset() == Preset::Custom && modified);
         card->setChecked(card->preset() == chromePreset);
     }
-    for (auto *button : headerSizeButtons)
-        button->setChecked(button->property("text_size").toString() == current.headerSize);
-    for (auto *button : footerSizeButtons)
-        button->setChecked(button->property("text_size").toString() == current.footerSize);
+    headerSizeControl->setSize(current.headerSize, current.headerEnabled);
+    footerSizeControl->setSize(current.footerSize, current.footerEnabled);
     for (auto *button : progressBarButtons)
         button->setChecked(button->property("switch_on").toBool() == current.progressBar);
     // A modified Custom layout carries a star, as on its card.
@@ -218,6 +224,7 @@ bool Reader::hideNativeStatus() const {
 void Reader::openSettings() {
     if (model->temporaryTypography())
         return;
+    kobalt::ui::PanelTiming timing("settings");
     kosyncPage->setAccount(kosyncClient->server(), kosyncClient->username(), kosyncClient->signedIn(),
                            kosyncClient->automatic());
     kosyncPage->setLastSync(kosyncClient->lastSync());
@@ -239,7 +246,7 @@ void Reader::openSettings() {
         settingsFontFaces[key] = model->fontFaces().contains(family) ? family : QString();
     }
     settingsDefaultFontFace = preferences.value("default_font_face").toString(defaultFontFace);
-    if (!model->fontFaces().contains(settingsDefaultFontFace))
+    if (!settingsDefaultFontFace.isEmpty() && !model->fontFaces().contains(settingsDefaultFontFace))
         settingsDefaultFontFace = defaultFontFace;
     settingsUiFontFace = preferences.value("ui_font_face").toString();
     settingsUiMonoFontFace = preferences.value("ui_mono_font_face").toString();
@@ -277,6 +284,8 @@ void Reader::openSettings() {
     displaySettings->columnSpacingButton->setEnabled(displaySettings->landscapeColumnsOption->isChecked());
     displaySettings->columnSpacingButton->setCaption(SettingsPanel::columnSpacingLabel(settingsColumnSpacing));
     settingsWordSpacing = model->state().value("word_spacing").toInt(100);
+    settingsParagraphSpacing = appearance::paragraphSpacing(preferences.value("paragraph_spacing"));
+    settingsParagraphIndent = appearance::paragraphIndent(preferences.value("paragraph_indent"));
     settingsTracking = model->state().value("justification_tracking").toInt(0);
     settingsWidowsOrphans = model->state().value("widows_orphans").toString("publisher");
     showAdvancedText();
@@ -299,20 +308,149 @@ void Reader::openSettings() {
     fitSettings();
     general->show();
     general->raise();
+    renderStylingSamples();
     refresh();
+    timing.finish(general);
 }
 
-void Reader::showAdvancedText() {
+void Reader::showAdvancedText(int changed) {
     auto *panel = static_cast<SettingsPanel *>(general);
     const QString wordSpacing = settingsWordSpacing == 80 ? "narrow" : settingsWordSpacing == 120 ? "wide" : "normal";
     panel->wordSpacingButton->setCaption(strings::get(("settings.word_spacing_" + wordSpacing).toUtf8().constData()).toUpper());
+    panel->paragraphSpacingButton->setCaption(strings::get("settings.paragraph_adjustments_value")
+        .arg(SettingsPanel::paragraphSpacingLabel(settingsParagraphSpacing),
+             SettingsPanel::paragraphSpacingLabel(settingsParagraphIndent)).toUpper());
     const QString tracking = settingsTracking == 15 ? "more" : settingsTracking == 5 ? "subtle" : "off";
     panel->trackingButton->setCaption(strings::get(("settings.justification_tracking_" + tracking).toUtf8().constData()).toUpper());
     panel->widowsOrphansButton->setCaption(strings::get(("settings.widows_orphans_" + settingsWidowsOrphans).toUtf8().constData()).toUpper());
     panel->verticalSpacingButton->setCaption(strings::get(("settings.vertical_spacing_" + settingsVerticalSpacing).toUtf8().constData()).toUpper());
     panel->verticalSpacingScopeButton->setCaption(strings::get(("settings.vertical_spacing_scope_" + settingsVerticalSpacingScope).toUtf8().constData()).toUpper());
+    // The scope chooses which gaps page spacing adjusts, so it waits for a mode.
     panel->verticalSpacingScopeButton->setEnabled(settingsVerticalSpacing != "off");
+    renderStylingSamples(changed);
+}
 
+void Reader::cancelStylingSamples() {
+    for (auto &render : stylingSampleRenders)
+        if (render)
+            render->store(true);
+}
+
+int Reader::stylingChoice(int feature) const {
+    using Feature = SettingsPanel::AdvancedText;
+    switch (Feature(feature)) {
+    case Feature::ParagraphSpacing:
+        return 0;
+    case Feature::WordSpacing:
+        return settingsWordSpacing == 80 ? 0 : settingsWordSpacing == 120 ? 2 : 1;
+    case Feature::Tracking:
+        return settingsTracking == 15 ? 2 : settingsTracking == 5 ? 1 : 0;
+    case Feature::Pagination:
+        return settingsWidowsOrphans == "allow" ? 2 : settingsWidowsOrphans == "avoid" ? 1 : 0;
+    case Feature::VerticalSpacing:
+        return settingsVerticalSpacing == "expand" ? 2 : settingsVerticalSpacing == "center" ? 1 : 0;
+    case Feature::VerticalSpacingScope:
+        return settingsVerticalSpacingScope == "protection" ? 1 : 0;
+    }
+    return 0;
+}
+
+void Reader::renderStylingSamples(int unchanged) {
+    auto *panel = static_cast<SettingsPanel *>(general);
+    if (!general->isVisible() || panel->settingsPages->currentIndex() != StylingSettings || page->image.isNull())
+        return;
+    using Feature = SettingsPanel::AdvancedText;
+    // The sample uses the book's typography with the Styling choices made so
+    // far, which are applied to the book only when Settings closes.
+    auto settings = styleSampleSettings(model->state());
+    settings["dark_mode"] = darkOption->isChecked();
+    settings["word_spacing"] = settingsWordSpacing;
+    settings["paragraph_spacing"] = settingsParagraphSpacing;
+    settings["paragraph_indent"] = settingsParagraphIndent;
+    settings["justification_tracking"] = settingsTracking;
+    settings["widows_orphans"] = settingsWidowsOrphans;
+    settings["vertical_justification"] = settingsVerticalSpacing;
+    settings["vertical_spacing_scope"] = settingsVerticalSpacingScope;
+    for (const auto *key : appearance::fallbackFontKeys)
+        settings[key] = settingsFontFaces.value(key).toString();
+    const auto size = page->image.size();
+    const int margin = settings.value("margin_pixels").toInt();
+    const auto textPage = panel->stylingTextPageSize(size, margin);
+    // Crops keep a little paper beside the text.
+    const int side = qMin(margin, int(ui::px(16)));
+    const int top = settings.value("top_margin_pixels").toInt();
+    auto crop = panel->stylingCropSize(textPage, margin);
+    crop = QSize(qMin(textPage.width(), crop.width() + 2 * side), qMin(textPage.height() - top, crop.height()));
+    const QPoint cropOrigin(margin - side, top);
+    const struct {
+        Feature feature;
+        const char *key;
+        QVector<QJsonValue> values;
+    } requests[] = {
+        {Feature::WordSpacing, "word_spacing", {80, 100, 120}},
+        {Feature::ParagraphSpacing, "paragraph_spacing", {settingsParagraphSpacing}},
+        {Feature::Tracking, "justification_tracking", {0, 5, 15}},
+        {Feature::Pagination, "widows_orphans", {QStringLiteral("publisher"), QStringLiteral("avoid"), QStringLiteral("allow")}},
+        {Feature::VerticalSpacing, "vertical_justification", {QStringLiteral("off"), QStringLiteral("center"), QStringLiteral("expand")}},
+        {Feature::VerticalSpacingScope, "vertical_spacing_scope", {QStringLiteral("all"), QStringLiteral("protection")}},
+    };
+    for (const auto &entry : requests) {
+        const int feature = int(entry.feature);
+        if (feature == unchanged)
+            continue;
+        // With page spacing Normal, both scopes draw the same pages and the
+        // row is unavailable, so a render would only search in vain.
+        if (entry.feature == Feature::VerticalSpacingScope && settingsVerticalSpacing == "off")
+            continue;
+        const bool spacing = entry.feature == Feature::WordSpacing || entry.feature == Feature::Tracking;
+        StyleSampleRequest request;
+        request.key = entry.key;
+        request.values = entry.values;
+        const bool vertical = entry.feature == Feature::VerticalSpacing || entry.feature == Feature::VerticalSpacingScope;
+        if (spacing) {
+            // Spacing depends on the font, so these samples use the book's typography.
+            request.settings = settings;
+            // Tracking only acts on justified lines, so its sample is justified.
+            if (entry.feature == Feature::Tracking)
+                request.settings["text_alignment"] = QStringLiteral("justify");
+            request.page = textPage;
+        } else {
+            request.settings = styleSamplePageSettings(settings);
+            request.page = styleSamplePageSize();
+        }
+        if (entry.feature == Feature::ParagraphSpacing) {
+            // Use the layout sample's opening paragraphs with room beside
+            // the text to see first-line indentation and continuation lines.
+            request.settings["font_pixels"] = readingPixels(30);
+            request.settings["paragraph_indent"] = settingsParagraphIndent;
+            const int margin = readingPixels(96), paper = readingPixels(64);
+            request.settings["margin_pixels"] = margin;
+            request.cropOrigin = {margin - paper, styleSampleReadingArea().top()};
+            request.crop = {request.page.width() - 2 * margin + 2 * paper, readingPixels(640)};
+        }
+        request.thumbnail = panel->stylingPageSize(request.page, vertical);
+        if (vertical) {
+            request.readingArea = styleSampleReadingArea();
+            request.detail = panel->stylingEdgeSize(request.page);
+        }
+        if (spacing) {
+            request.crop = crop;
+            request.cropOrigin = cropOrigin;
+        }
+        auto &render = stylingSampleRenders[feature];
+        if (render)
+            render->store(true);
+        panel->setStylingSample(entry.feature, {});
+        render = request.cancelled = std::make_shared<std::atomic_bool>(false);
+        ++stylingSamplesPending;
+        renderStyleSample(model->fontInputs(), request, this,
+                          [this, panel, entry = entry.feature, cancelled = render](StyleSample sample) {
+                              --stylingSamplesPending;
+                              if (cancelled->load() || !sample.valid())
+                                  return;
+                              panel->setStylingSample(entry, sample);
+                          });
+    }
 }
 
 void Reader::fitSettings() {
@@ -372,6 +510,8 @@ void Reader::applySettings() {
     next["two_columns_landscape"] = static_cast<SettingsPanel *>(general)->landscapeColumnsOption->isChecked();
     next["column_spacing_percent"] = settingsColumnSpacing;
     next["word_spacing"] = settingsWordSpacing;
+    next["paragraph_spacing"] = settingsParagraphSpacing;
+    next["paragraph_indent"] = settingsParagraphIndent;
     next["justification_tracking"] = settingsTracking;
     next["widows_orphans"] = settingsWidowsOrphans;
     next["page_animations"] = animationOption->isChecked();
@@ -381,9 +521,12 @@ void Reader::applySettings() {
     next.remove(pageNavigation::barVisibleKey);
     next["minimal_annotation_mode"] = minimalAnnotationOption->isChecked();
     next["screen_refresh"] = kobalt::screenRefreshValue(screenRefreshMode);
-    if (restoringDefaults)
+    if (restoringDefaults) {
         next[kobalt::headerfooter::presetKey] =
             kobalt::headerfooter::presetValue(kobalt::headerfooter::Preset::Default);
+        next[kobalt::headerfooter::textKey] = kobalt::headerfooter::textSettings(
+            kobalt::headerfooter::presetLayout(kobalt::headerfooter::Preset::Default));
+    }
     const auto rotation = orientation->settings();
     for (auto it = rotation.begin(); it != rotation.end(); ++it)
         next[it.key()] = it.value();
@@ -409,7 +552,7 @@ void Reader::applySettings() {
     chapterGraph->setDense(preferences.value("dense_stats_chart").toBool(false));
     auto settings =
         appearanceEdit.edited() && appearanceEdit.ready() ? appearanceEdit.preview()->requestedState() : model->state();
-    settings["default_font_face"] = settingsDefaultFontFace;
+    settings["default_font_face"] = settingsDefaultFontFace.isEmpty() ? QString(defaultFontFace) : settingsDefaultFontFace;
     for (const auto *key : appearance::fallbackFontKeys)
         settings[key] = preferences.value(key).toString();
     settings["dark_mode"] = darkOption->isChecked();
@@ -421,6 +564,8 @@ void Reader::applySettings() {
     settings["two_columns_landscape"] = preferences.value("two_columns_landscape");
     settings["column_spacing_percent"] = settingsColumnSpacing;
     settings["word_spacing"] = settingsWordSpacing;
+    settings["paragraph_spacing"] = settingsParagraphSpacing;
+    settings["paragraph_indent"] = settingsParagraphIndent;
     settings["justification_tracking"] = settingsTracking;
     settings["widows_orphans"] = settingsWidowsOrphans;
     settings["bold_reading"] = bionicOption->isChecked() ? QStringLiteral("bold") : QStringLiteral("off");
@@ -507,6 +652,10 @@ void Reader::applyAutomaticOpening(bool enabled) {
 void Reader::applyTheme(bool dark) {
     if (themeReady && darkTheme == dark)
         return;
+    // The first theme is part of showing the reader.
+    const bool first = !themeReady;
+    QElapsedTimer theming;
+    theming.start();
     themeReady = true;
     darkTheme = dark;
     // Theme this window only. Nickel keeps its own palette when we close.
@@ -533,6 +682,8 @@ void Reader::applyTheme(bool dark) {
             kobalt::ui::refreshButtonIcon(button);
     }
     update();
+    if (first)
+        openingStages["theme_ms"] = theming.nsecsElapsed() / 1e6;
 }
 
 // Resolve the displayed book face and retain its bytes for GUI text. Publisher
@@ -554,16 +705,15 @@ QString Reader::bookFace() {
 }
 
 void Reader::registerPickerFonts(const QString &family) {
-    const auto registerFont = [this](const QString &path, bool copyForQt, const QString &family) {
-        // Qt 5.2 loads another copy when registering a reading font. Its
-        // private preview face is already loaded, so keep samples on that path.
-        const auto registration =
-            ui::registerPrivateInterfaceFont(path, family, QT_VERSION < QT_VERSION_CHECK(5, 3, 0));
-        if (registration == ui::PrivateFontRegistration::Native)
-            registerPickerFont(path, copyForQt, registeredFontPaths, registeredFonts);
+    // Samples draw from the private faces, never from Qt's font database. Adding
+    // a font there and removing it when the reader closes makes Qt rebuild the
+    // whole database on the next text it draws, Nickel's Home included. On the
+    // Mac that rebuild was about 100 ms of a 125 ms close.
+    const auto registerFont = [](const QString &path, const QString &family) {
+        ui::registerPrivateInterfaceFont(path, family);
     };
     // Match the engine's source precedence so duplicate sideloads cannot
-    // replace a bundled face in Qt's font-name previews.
+    // replace a bundled face in font-name previews.
     // Qt 5.2 on firmware 4 keeps the first face it sees for a weight and
     // slant. A bold face whose PANOSE weight says "medium" is filed under
     // normal weight there, so register each family's regular face first.
@@ -581,10 +731,10 @@ void Reader::registerPickerFonts(const QString &family) {
         }
         for (const auto &file : font.files)
             if (file.contains("Regular", Qt::CaseInsensitive))
-                registerFont(file, font.copyForQt, font.family);
+                registerFont(file, font.family);
         for (const auto &file : font.files)
             if (!file.contains("Regular", Qt::CaseInsensitive))
-                registerFont(file, font.copyForQt, font.family);
+                registerFont(file, font.family);
     }
 }
 
@@ -870,7 +1020,8 @@ void Reader::showSettingsFonts() {
     sample(panel->dictionaryFontButton, dictionaryFace);
     panel->dictionaryFontSizeButton->setCaption(SettingsPanel::dictionaryFontSizeLabel(settingsDictionaryFontSize).toUpper());
     sample(panel->defaultFontButton, settingsDefaultFontFace);
-    panel->defaultFontButton->setCaption(fontDisplayName(settingsDefaultFontFace).toUpper());
+    panel->defaultFontButton->setCaption((settingsDefaultFontFace.isEmpty()
+        ? strings::get("reader.publisher_fonts") : fontDisplayName(settingsDefaultFontFace)).toUpper());
     const auto defaults = fallbackFontDefaults(model->fontFaces());
     int index = 0;
     for (auto *button : {panel->serifFontButton, panel->sansFontButton, panel->monoFontButton}) {
@@ -902,8 +1053,7 @@ void Reader::openSettingsFont(const QString &key) {
         if (fonts[row].origin == FontOrigin::BuiltIn &&
             !nativeFamilies.contains(fonts[row].family, Qt::CaseInsensitive))
             fonts.removeAt(row);
-    if (!isDefault)
-        fonts.prepend({QString(), {}, FontOrigin::Recommended, false, {}, {}});
+    fonts.prepend({QString(), {}, FontOrigin::Recommended, {}, {}});
     panel->showFontChoices(
         isDefault        ? strings::get("reader.default_font")
         : isUi           ? strings::get("settings.ui_font")
@@ -918,11 +1068,11 @@ void Reader::openSettingsFont(const QString &key) {
         : isHeaderFooter ? settingsHeaderFooterFontFace
         : isDictionary   ? settingsDictionaryFontFace
                          : settingsFontFaces.value(key).toString(),
-        isDefault                    ? QString(defaultFontFace)
-        : isUi                       ? QString("IBM Plex Sans")
-        : (isMono || isHeaderFooter) ? QString("IBM Plex Mono")
-        : isDictionary               ? bookFace()
-                                     : fallbackFontDefaults(model->fontFaces())[index],
+        isDefault ? strings::get("reader.publisher_fonts")
+                  : strings::get("settings.font_default_value").arg(fontDisplayName(
+                        isUi ? QString("IBM Plex Sans")
+                        : (isMono || isHeaderFooter) ? QString("IBM Plex Mono")
+                        : isDictionary ? bookFace() : fallbackFontDefaults(model->fontFaces())[index])),
         [this, key, isDefault, isUi, isMono, isHeaderFooter, isDictionary](const QString &family) {
             if (isDefault)
                 settingsDefaultFontFace = family;

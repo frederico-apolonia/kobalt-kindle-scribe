@@ -23,7 +23,7 @@ class ReadingBook {
 public:
     ReadingBook(std::unique_ptr<ReaderSession> session, QString statePath, storage::Paths paths, QString identity,
                 QByteArray digest, std::unique_ptr<ReadingBridge> bridge, ReadingProgress baseline,
-                ReadingProgress diskBaseline, QString sourceKey = {});
+                ReadingProgress diskBaseline, QString sourceKey = {}, ReadingHistory::UtcClock utc = {});
     ~ReadingBook();
     ReaderSession *session() const {
         return model.get();
@@ -39,6 +39,7 @@ public:
     }
     bool deviceTransition() const;
     bool canWriteNative() const;
+    bool hasNativeProgress() const { return bool(bridge); }
     // Downloaded native-library titles use that platform's cloud sync.
     // Sideloaded file identities keep native local progress and use KOsync.
     bool usesNativeCloudSync() const { return nativeCloudSync; }
@@ -47,9 +48,13 @@ public:
         return identity_.startsWith("file://") && identity_.endsWith(".epub", Qt::CaseInsensitive) &&
                !identity_.endsWith(".kepub.epub", Qt::CaseInsensitive);
     }
-    void releaseNative();
+    // Revocation abandons native work but keeps local data available to save.
+    void releaseNative(bool save = true);
     void observeReading(bool learnPace = true);
-    void stopReading();
+    void stopReading(bool background = false, bool nativeAllowed = true);
+    void sleepReading(const QJsonObject &preferences);
+    void finishReading(std::function<void(bool)> done);
+    bool readingSavePending() const;
     bool checkpointReadingHistory(bool background = false);
     bool tracksReadingHistory() const { return bool(history); }
     bool usesLocalPace() const {
@@ -62,6 +67,7 @@ public:
     }
     // Active time for this opening, excluding sleep and hidden reader time.
     qint64 readingMilliseconds() const;
+    qint64 sessionReadingMilliseconds() const { return readingMilliseconds() - sessionBaseline; }
     bool readingActive() const {
         return activeReading.isValid();
     }
@@ -92,11 +98,18 @@ public:
     void acknowledge(const ReadingProgress &shown, bool moved);
     // False leaves a sync conflict pending for the window to resolve.
     bool writeNative(const QString &location, const QString &mappingError);
+    enum class NativeSave { Saved, LocalOnly, Conflict, Failed };
+    NativeSave nativeSaveResult() const;
+    const QString &nativeSaveError() const { return nativeWritebackError; }
     // A background checkpoint is queued on the book's writer thread and
     // returns at once; a failure is reported through onCheckpointFailed. A
     // synchronous checkpoint first drops a queued one and waits for a running
     // one, so an older position cannot replace it.
     bool checkpoint(QJsonObject *snapshot, bool background = false);
+    // Save the final immutable snapshot and acknowledge history without blocking
+    // the GUI. A false result retains the book's state for another attempt.
+    void checkpointForClose(std::function<void(bool)> done);
+    QJsonObject checkpointState() const;
     bool savesPending() const;
     void onCheckpointFailed(std::function<void()> failed) {
         checkpointFailed = std::move(failed);
@@ -110,6 +123,12 @@ public:
     bool saveDictionaryChoice(const QString &id);
 
 private:
+    void finishNativeReading(quint64 generation, bool saved);
+    quint64 nativeFinishGeneration = 0;
+    QVector<std::function<void(bool)>> nativeFinishCallbacks;
+    QJsonObject persistedCheckpoint(const QJsonObject &state) const;
+    void finishCloseCheckpoint(const QJsonObject &checkpoint, bool saved, std::function<void(bool)> done);
+    bool closeCheckpointPending = false;
     ReadingActivity readingActivity() const;
     void saveSpeed(bool force = false);
     std::unique_ptr<ReaderSession> model;
@@ -123,6 +142,9 @@ private:
     ProgressReconciler reconciliation;
     QElapsedTimer progressPoll;
     ReadingTimer activeReading;
+    bool sleepingReading = false;
+    ReadingHistory::UtcClock utc;
+    qint64 sleepingAt = 0, sleepingTimeout = 0, sessionBaseline = 0;
     qint64 completedReadingMilliseconds = 0;
     ReadingPace pace_;
     std::unique_ptr<ReadingSpeed> speed;

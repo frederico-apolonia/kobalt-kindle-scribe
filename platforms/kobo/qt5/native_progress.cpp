@@ -5,6 +5,7 @@
 #include "platforms/kobo/common/native_progress.h"
 #include "support/strings.h"
 #include "platforms/kobo/common/native_database_wait.h"
+#include "platforms/kobo/common/native_lifecycle.h"
 #include <QDateTime>
 #include <QMetaType>
 #include <QPointer>
@@ -142,12 +143,14 @@ ReadingProgress NativeProgress::read(QString *error) const {
     return value;
 }
 bool NativeProgress::write(const ReadingProgress &expected, const QString &position, double percent, bool finished,
-                           ReadingProgress *verified, QString *error, const ReadingEstimates *estimates) {
+                           ReadingProgress *verified, QString *error, const ReadingEstimates *estimates, const ReadingActivity *) {
     const auto fail = [error](const QString &message) {
         if (error)
             *error = message;
         return false;
     };
+    if (!NativeLifecycle::nativeProgressSaveAllowed() || deviceTransition())
+        return fail(strings::get("error.nickel_save_deferred_while_progress_or_device_state_is_unresolved"));
     const auto &native = api();
     if (!available() || native.tolino(native.device()))
         return fail(strings::get("error.native_progress_writeback_is_unsupported_on_this_firmware_mode"));

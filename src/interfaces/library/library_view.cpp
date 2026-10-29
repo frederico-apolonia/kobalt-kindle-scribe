@@ -13,6 +13,9 @@
 #include "library/arrangement.h"
 #include "platform/api/light_controls.h"
 #include "support/strings.h"
+#include "ui/hold_timer.h"
+#include <QPointer>
+#include <utility>
 #include <QApplication>
 #include <QCache>
 #include <QHideEvent>
@@ -124,14 +127,7 @@ public:
         covers.setMaxCost(lm::coverCacheEntries);
         hold.setSingleShot(true);
         hold.setInterval(lm::longPressMilliseconds);
-        connect(&hold, &QTimer::timeout, this, [this] {
-            if (pressed < 0 || !placed.value(pressed).book)
-                return;
-            held = true;
-            setHighlight(-1);
-            if (onHold)
-                onHold(placed[pressed].book->key);
-        });
+        connect(&hold, &QTimer::timeout, this, [this] { triggerHold(); });
     }
     struct Placement {
         QRect area, cover;
@@ -176,6 +172,17 @@ public:
     bool home = false;
 
 protected:
+    bool event(QEvent *event) override {
+        if (event->type() == QEvent::TouchCancel) {
+            hold.stop();
+            gestureActive = held = false;
+            pressed = -1;
+            setHighlight(-1);
+            event->accept();
+            return true;
+        }
+        return QWidget::event(event);
+    }
     void resizeEvent(QResizeEvent *) override {
         dirty = true;
     }
@@ -196,13 +203,14 @@ protected:
             paintGrid(painter, ink, paper);
     }
     void mousePressEvent(QMouseEvent *event) override {
+        gestureActive = true;
         // The books can change between a paint and the next press.
         placed = placements();
         held = false;
         start = event->pos();
         pressed = hitAt(event->pos());
         if (pressed >= 0 && placed[pressed].book) {
-            hold.start();
+            hold.start(event);
             setHighlight(pressed);
         }
     }
@@ -215,7 +223,15 @@ protected:
         }
     }
     void mouseReleaseEvent(QMouseEvent *event) override {
-        hold.stop();
+        if (!std::exchange(gestureActive, false))
+            return;
+        if ((event->pos() - start).manhattanLength() > lm::holdSlop)
+            hold.stop();
+        QPointer<BookPages> guard(this);
+        if (hold.finish(event))
+            triggerHold();
+        if (!guard)
+            return;
         setHighlight(-1);
         const auto delta = event->pos() - start;
         // A horizontal swipe turns the page, as in the reader.
@@ -246,6 +262,14 @@ protected:
     }
 
 private:
+    void triggerHold() {
+        if (held || pressed < 0 || !placed.value(pressed).book)
+            return;
+        held = true;
+        setHighlight(-1);
+        if (onHold)
+            onHold(placed[pressed].book->key);
+    }
     // The book under a press, drawn pressed until the press ends or moves away.
     int highlighted = -1;
     void setHighlight(int value) {
@@ -261,7 +285,8 @@ private:
     std::function<QString(const QString &)> coverPath;
     QCache<QString, QImage> covers;
     QVector<Placement> placed;
-    QTimer hold;
+    ui::HoldTimer hold;
+    bool gestureActive = false;
     QPoint start;
     QSize laidOut;
     int perPage = 1, pages = 1, columns = 1, cellWidth = 0, cellHeight = 0, coverWidth = 0, pressed = -1;
@@ -923,6 +948,9 @@ LibraryView::LibraryView(const Index &index, std::function<QString(const QString
         pages->page = 0;
         rebuild(false);
     });
+    connect(query, &QLineEdit::returnPressed, this, [this] {
+        if (keyboard) keyboard->hide();
+    });
     connect(more, &QPushButton::clicked, this, &LibraryView::showMoreSheet);
     connect(settingsCell, &QPushButton::clicked, this, &LibraryView::showSettings);
     connect(sort, &QPushButton::clicked, this, [this] {
@@ -991,6 +1019,13 @@ LibraryView::LibraryView(const Index &index, std::function<QString(const QString
     rebuild(false);
 }
 LibraryView::~LibraryView() = default;
+void LibraryView::setKeyboardFactory(KeyboardFactory factory) {
+    keyboard = factory ? factory(this, query) : nullptr;
+    if (!keyboard) return;
+    keyboard->setSubmitText(strings::get("search_panel.search"));
+    keyboard->submitted = [this] { query->clearFocus(); };
+    if (searching) keyboard->show();
+}
 
 QWidget *LibraryView::buildEmpty() {
     // Short windows, such as a phone in landscape, scroll this page.
@@ -1159,10 +1194,12 @@ void LibraryView::setSearching(bool value) {
     if (value) {
         closeOverlay();
         query->setFocus();
-        QGuiApplication::inputMethod()->show();
+        if (keyboard) keyboard->show();
+        else QGuiApplication::inputMethod()->show();
     } else {
         query->clear();
-        QGuiApplication::inputMethod()->hide();
+        if (keyboard) keyboard->hide();
+        else QGuiApplication::inputMethod()->hide();
     }
     arrange();
     rebuild(false);
@@ -1280,6 +1317,12 @@ void LibraryView::resizeEvent(QResizeEvent *) {
     pages->dirty = true;
     arrange();
     rebuild(true);
+    if (keyboard) keyboard->place();
+}
+void LibraryView::hideEvent(QHideEvent *event) {
+    if (keyboard) keyboard->hide();
+    clockTimer->stop();
+    ui::Panel::hideEvent(event);
 }
 void LibraryView::paintEvent(QPaintEvent *event) {
     ui::Panel::paintEvent(event);
@@ -1407,10 +1450,6 @@ void LibraryView::showEvent(QShowEvent *event) {
         return;
     refreshStatus();
     clockTimer->start();
-}
-void LibraryView::hideEvent(QHideEvent *event) {
-    clockTimer->stop();
-    ui::Panel::hideEvent(event);
 }
 void LibraryView::showSettings() {
     closeOverlay();

@@ -13,6 +13,7 @@
 #include "reading/appearance_settings.h"
 #include "reading/page_navigation.h"
 #include "reading/sleep_screen.h"
+#include "reading/session_timeout.h"
 #include "storage/reader_storage.h"
 #include <QDateTime>
 #include <QGridLayout>
@@ -78,20 +79,21 @@ void Reader::confirmCustomReplace(const std::function<void()> &proceed, const st
     customReplaceDialog->setFocus();
 }
 
-void Reader::showFontDefaultDialog(const QString &face) {
+void Reader::showFontDefaultDialog(const QString &face, bool instructions) {
     if (model->temporaryTypography())
         return;
     if (fontDefaultDialog || !appearanceEdit.panelOpen())
         return;
     const auto current = preferences.value("default_font_face").toString(defaultFontFace);
-    const bool instructions = face.isEmpty(), alreadyDefault = face == current;
+    const bool alreadyDefault = face == current;
+    const auto label = face.isEmpty() ? strings::get("reader.publisher_fonts") : fontDisplayName(face);
     const ui::ModalContent content{
         instructions     ? strings::get("reader.default_font_instructions")
-        : alreadyDefault ? strings::get("reader.already_default_font").arg(fontDisplayName(face))
+        : alreadyDefault ? strings::get("reader.already_default_font").arg(label)
                          : (face == defaultFontFace ? strings::get("reader.restore_default_font_description")
                                                     : strings::get("reader.make_default_font_description")),
         instructions || alreadyDefault ? strings::get("reader.your_default_font")
-                                       : strings::get("reader.make_default_font").arg(fontDisplayName(face)),
+                                       : strings::get("reader.make_default_font").arg(label),
         {}};
     const ui::ModalAction primary{instructions || alreadyDefault ? strings::get("common.ok")
                                                                  : strings::get("reader.make_default"),
@@ -148,7 +150,7 @@ void Reader::showFontDefaultDialog(const QString &face) {
                 dismiss();
                 mutateAppearance([face](ReaderSession &preview) {
                     auto settings = preview.state();
-                    settings["default_font_face"] = face;
+                    settings["default_font_face"] = face.isEmpty() ? QString(defaultFontFace) : face;
                     preview.apply(settings);
                 });
                 showFontPicker();
@@ -438,6 +440,7 @@ void Reader::showFinishChoice() {
 
 void Reader::guardExit() {
     exitGuarded = true;
+    exitGuardPressTime = lastPressTime;
     const int generation = ++exitGuardGeneration;
     kobalt::qt::later(0, this, [this, generation] {
         kobalt::qt::later(m::contents::exitGuardMilliseconds, this, [this, generation] {
@@ -445,6 +448,16 @@ void Reader::guardExit() {
                 exitGuarded = false;
         });
     });
+}
+
+bool Reader::exitGuardElapsed() const {
+    // The timer above starts once the reader has handled the close. Source
+    // timestamps tell a tap pressed later apart from one that only waited.
+    // Without them, the timer alone decides. Subtraction permits clock wrap.
+    if (!exitGuardPressTime || !lastPressTime)
+        return false;
+    const quint32 elapsed = lastPressTime - exitGuardPressTime;
+    return elapsed < 0x80000000u && elapsed >= quint32(m::contents::exitGuardMilliseconds);
 }
 
 void Reader::askRemoveBookmark(const QString &position) {
@@ -776,7 +789,13 @@ QString sleepTileExplanation(sleep::Tile tile) {
 }
 }
 
+namespace {
+QString sessionTimeoutLabel(int minutes) {
+    return strings::get(QString("settings.session_timeout_%1").arg(minutes).toLatin1().constData());
+}
+}
 void Reader::showSleepScreen() {
+    sessionTimeoutButton->setCaption(sessionTimeoutLabel(sessionTimeout::minutes(preferences)).toUpper());
     sleepScreenButton->setCaption(sleepScreenButton->isEnabled() ? sleepLabel(sleep::mode(preferences), services).toUpper()
                                                                  : strings::get("settings.unsupported_caption"));
     sleepTileButton->setCaption(sleepTileButton->isEnabled() ? sleepTileLabel(sleep::tile(preferences)).toUpper()
@@ -823,6 +842,22 @@ void Reader::openSleepScreen() {
                     });
 }
 
+void Reader::openSessionTimeout() {
+    QVector<SleepOption> options;
+    int current = 0;
+    for (const auto minutes : sessionTimeout::choices) {
+        if (minutes == sessionTimeout::minutes(preferences)) current = options.size();
+        options.append({QString::number(minutes), sessionTimeoutLabel(minutes),
+                        minutes == 0 ? strings::get("settings.session_timeout_never_description") : QString()});
+    }
+    openSleepChoice("rrSessionTimeout", "rrSessionTimeout_", strings::get("settings.session_timeout"), options, current,
+                    [this](int index) {
+                        auto next = preferences;
+                        next[sessionTimeout::preferenceKey] = sessionTimeout::choices[index];
+                        saveSleepPreferences(next);
+                    }, strings::get("settings.session_timeout_description"));
+}
+
 void Reader::openSleepTile() {
     QVector<SleepOption> options;
     int current = 0;
@@ -840,7 +875,8 @@ void Reader::openSleepTile() {
 }
 
 void Reader::openSleepChoice(const QString &name, const QString &optionPrefix, const QString &heading,
-                             const QVector<SleepOption> &options, int current, std::function<void(int)> chosen) {
+                             const QVector<SleepOption> &options, int current, std::function<void(int)> chosen,
+                             const QString &description) {
     if (sleepPopup) {
         return;
     }
@@ -859,6 +895,12 @@ void Reader::openSleepChoice(const QString &name, const QString &optionPrefix, c
     card->rows()->addSpacing(m::notice::cardMargins.top());
     auto *title = card->title(heading, name + "Title");
     title->setContentsMargins(c::inset, 0, c::inset, 0);
+    if (!description.isEmpty()) {
+        card->rows()->addSpacing(m::spacing::row);
+        auto *hint = card->message(description, name + "Hint");
+        readerStyle(hint, styles::font(c::descriptionText));
+        hint->setContentsMargins(c::inset, 0, c::inset, 0);
+    }
     card->rows()->addSpacing(m::notice::cardMargins.bottom());
     const int cardWidth = qMin<int>(m::notice::cardWidth, width() - 2 * m::notice::sideClearance);
     auto *choices = new ui::RadioList(card);
@@ -1191,7 +1233,7 @@ QString tappableLinksDescription(const QString &mode) {
 }
 
 void Reader::showTappableLinks() {
-    const auto mode = preferences.value("tappable_links").toString("off");
+    const auto mode = preferences.value("tappable_links").toString("footnotes");
     tappableLinksButton->setCaption(tappableLinksLabel(mode).toUpper());
 }
 
@@ -1233,8 +1275,8 @@ void Reader::openTappableLinks() {
     choices->setObjectName("rrTappableLinksChoices");
     choices->setMinimumRowHeight(c::listActionHeight);
     choices->setTopDivider(true);
-    const QStringList modes{"off", "footnotes", "all"};
-    const auto current = preferences.value("tappable_links").toString("off");
+    const QStringList modes{"footnotes", "all", "off"};
+    const auto current = preferences.value("tappable_links").toString("footnotes");
     for (const auto &mode : modes) {
         choices->add("rrTappableLinks_" + mode, tappableLinksLabel(mode), tappableLinksDescription(mode));
         if (mode == current)

@@ -226,7 +226,7 @@ Window::Window(storage::Paths paths, EngineFontInputs fonts, QString placeholder
     resolutionPicker->setObjectName("desktopResolutionPicker");
     resolutionPicker->setAccessibleName(tr("Rendering resolution"));
     resolutionPicker->setToolTip(
-        tr("Change preview sharpness without changing the book layout. Native uses the Mac display resolution."));
+        tr("Change preview sharpness without changing the book layout. Native uses the display resolution."));
     resolutionPicker->addItem(tr("212 DPI"), 212);
     resolutionPicker->addItem(tr("300 DPI"), 300);
     resolutionPicker->addItem(tr("Native"), 0);
@@ -291,6 +291,7 @@ Window::Window(storage::Paths paths, EngineFontInputs fonts, QString placeholder
         sizeCanvas();
     });
     start = new android::StartScreen(readerServices().presentation, store);
+    start->library()->setKeyboardFactory(readerServices().keyboard);
     start->setDark(controller.preferences().value("dark_mode").toBool(false));
     connect(start, &android::StartScreen::bookRequested, this, &Window::openBook);
     connect(start, &android::StartScreen::libraryOpenRequested, this, &Window::chooseBook);

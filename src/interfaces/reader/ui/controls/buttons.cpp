@@ -68,8 +68,10 @@ void Button::paintEvent(QPaintEvent *) {
             option.icon = QIcon();
             QPainter painter(this);
             style()->drawControl(QStyle::CE_PushButton, &option, &painter, this);
-            const bool active = isEnabled() && (isChecked() || isDown());
-            painter.setPen(palette().color(!isEnabled() ? QPalette::Mid
+            const bool primary = property("reader_primary_action").toBool();
+            const bool active = isEnabled() && (primary ? !isDown() : isChecked() || isDown());
+            const auto colors = primary ? readerPalette(palette(), darkTheme(this)) : palette();
+            painter.setPen(colors.color(!isEnabled() ? QPalette::Mid
                                            : active     ? QPalette::Window
                                                         : QPalette::WindowText));
             painter.setFont(font());
@@ -398,7 +400,8 @@ int CaptionButton::heightForWidth(int width) const {
     if (description.isEmpty())
         return Button::heightForWidth(width);
     namespace c = m::chrome;
-    const int available = qMax(1, width - c::inset - c::actionRight);
+    const int iconSpace = mode == Presentation::ListAction && iconVisible ? int(c::cellIcon) + px(20) : 0;
+    const int available = qMax(1, width - c::inset - c::actionRight - iconSpace);
     const auto label = font(), noteFont = captionFont();
     const int titleHeight = note.isEmpty() ? interfaceLineHeight(label)
         : interfaceLineHeight(label) / 2 + px(40) + interfaceLineHeight(noteFont) / 2;
@@ -504,7 +507,7 @@ void CaptionButton::paintEvent(QPaintEvent *) {
             painter.setFont(noteFont);
             painter.setPen(noteColor(this));
             drawInterfaceText(painter,
-                              QRect(c::inset, top + labelHeight / 2 + pitch - noteHeight / 2, textWidth, noteHeight),
+                              QRect(left, top + labelHeight / 2 + pitch - noteHeight / 2, textWidth, noteHeight),
                               elideInterfaceText(note, painter.font(), textWidth), Qt::AlignLeft | Qt::AlignVCenter);
         }
         return;

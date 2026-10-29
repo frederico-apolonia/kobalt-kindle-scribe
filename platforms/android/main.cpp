@@ -190,10 +190,6 @@ public:
             if (!android::refreshAvailable())
                 if (auto *control = reader->findChild<QWidget *>("rrScreenRefresh"))
                     control->hide();
-            if (auto *exit = reader->findChild<QPushButton *>("rrReturn")) {
-                exit->setText(strings::get("android.return"));
-                exit->setAccessibleName(strings::get("android.return"));
-            }
             reader->show();
             surfaceHandoff.present(true);
             setUpdatesEnabled(true);
@@ -445,7 +441,7 @@ int main(int argc, char **argv) {
     ui::setDensity(physicalPpi);
     QApplication::setFont(ui::interfaceFont());
     initializeDiagnostics(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/diagnostics");
-    Window window(engineFontInputs(*assets, "/system/fonts", {}, {}), placeholderFontFamily(*assets, copies));
+    Window window(engineFontInputs(*assets, "/system/fonts", {}), placeholderFontFamily(*assets, copies));
     // Keep edge-to-edge geometry while the activity controls bar visibility.
     window.show();
     qInfo() << "Kobalt Android ready; density" << physicalPpi;

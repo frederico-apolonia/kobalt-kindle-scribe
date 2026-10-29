@@ -19,9 +19,7 @@ public:
         return progress_->deviceTransition();
     }
     bool writable() const override {
-        return (!NativeLifecycle::suspended() || NativeLifecycle::usbSaveAllowed() ||
-                NativeLifecycle::sleepSaveAllowed()) &&
-               !progress_->deviceTransition();
+        return NativeLifecycle::nativeProgressSaveAllowed() && !progress_->deviceTransition();
     }
     ReadingProgress read(QString *error) const override {
         return progress_->read(error);
@@ -34,7 +32,7 @@ public:
         ReadingEstimates estimates;
         const bool available = reading_.estimates(activity, &estimates);
         return progress_->write(expected, location, percent, finished, verified, error,
-                                available ? &estimates : nullptr);
+                                available ? &estimates : nullptr, &activity);
     }
     void observeReading(const ReadingActivity &activity) override {
         reading_.start(activity);
@@ -45,6 +43,12 @@ public:
     }
     void stopReading() override {
         reading_.stop();
+    }
+    void finishReading(std::function<void(bool)> done) override {
+        reading_.finish(std::move(done));
+    }
+    bool readingSavePending() const override {
+        return reading_.savePending();
     }
 
 private:

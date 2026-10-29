@@ -574,7 +574,7 @@ int main(int argc, char **argv) {
             storage::writePreferences(paths.preferences(), saved.object);
         }
     }
-    Window window(engineFontInputs(assets, {}, homeFolder() + "/fonts", {}), placeholderFontFamily(assets, copies), light);
+    Window window(engineFontInputs(assets, {}, homeFolder() + "/fonts"), placeholderFontFamily(assets, copies), light);
     window.showFullScreen();
     // Test hook: leave cleanly after a number of seconds so a dry run can dump its last frame.
     const int exitAfter = qEnvironmentVariableIntValue("KOBALT_KINDLE_EXIT_AFTER");

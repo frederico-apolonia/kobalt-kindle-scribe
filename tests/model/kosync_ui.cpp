@@ -1,10 +1,12 @@
 #include "interfaces/reader/settings/settings_panel.h"
+#include "interfaces/reader/views/kosync_notice.h"
 #include "check.h"
 #include "support/strings.h"
 #include "reader_inputs.h"
 #include "interfaces/reader/ui/style/fonts.h"
 #include "interfaces/reader/ui/style/styles.h"
 #include "interfaces/reader/ui/style/theme.h"
+#include "interfaces/reader/ui/controls/keyboard.h"
 #include <QApplication>
 #include <QLineEdit>
 #include <QFontInfo>
@@ -14,6 +16,7 @@
 #include <QStyleFactory>
 #include <QDir>
 #include <QImage>
+#include <QTest>
 
 using namespace kobalt;
 namespace {
@@ -30,6 +33,68 @@ private:
     int &destroyed_;
     QWidget *host_;
 };
+void checkKeyboardInputStaysInEditor() {
+    const int savedDensity = ui::density();
+    for (int ppi : {212, 300})
+        for (bool dark : {false, true}) {
+            ui::setDensity(ppi);
+            QWidget host;
+            host.resize(ui::px(800), ui::px(1136));
+            host.setFont(ui::interfaceFont());
+            ui::applyReaderPalette(&host, ui::readerPalette(host.palette(), dark));
+            ui::readerStyle(&host, ui::styles::reader());
+            reader::KosyncPage page(&host, &host, ui::makeWidgetKeyboard);
+            page.resize(host.size());
+            host.show();
+            page.show();
+            QApplication::processEvents();
+            for (const auto *field : {"rrKosyncServer", "rrKosyncUsername", "rrKosyncPassword"}) {
+                page.findChild<QPushButton *>(field)->click();
+                QApplication::processEvents();
+                auto *dialog = page.editorDialog.data();
+                auto *input = dialog->findChild<QLineEdit *>("rrKosyncInput");
+                auto *panel = dialog->findChild<QWidget *>("widgetKeyboard");
+                auto *first = panel->findChild<QPushButton *>("widgetKey1_0");
+                auto *second = panel->findChild<QPushButton *>("widgetKey1_1");
+                for (int i = 0; i < 3; ++i) QTest::mouseClick(first, Qt::LeftButton);
+                require(input->text() == "qqq", "real keyboard enters the account draft");
+
+                const auto left = first->mapTo(panel, QPoint(first->width(), first->height() / 2));
+                const auto right = second->mapTo(panel, QPoint(0, second->height() / 2));
+                require(right.x() > left.x(), "keyboard regression targets an actual gap between keys");
+                const auto gap = (left + right) / 2;
+                auto *gapTarget = panel->childAt(gap);
+                if (!gapTarget) gapTarget = panel;
+                QTest::mouseClick(gapTarget, Qt::LeftButton, Qt::NoModifier, gapTarget->mapFrom(panel, gap));
+                require(page.editorDialog && input->text() == "qqq", "a key gap does not dismiss the account draft");
+                QTest::mouseClick(panel, Qt::LeftButton, Qt::NoModifier, QPoint(1, 1));
+                require(page.editorDialog, "keyboard padding does not dismiss the editor");
+
+                QTest::mousePress(first, Qt::LeftButton);
+                QTest::mouseRelease(first, Qt::LeftButton, Qt::NoModifier, QPoint(-1, -1));
+                require(page.editorDialog && input->text() == "qqq", "releasing outside a key keeps the draft open");
+                QTest::mousePress(first, Qt::LeftButton);
+                QEvent cancel(QEvent::TouchCancel);
+                QApplication::sendEvent(first, &cancel);
+                QTest::mouseRelease(first, Qt::LeftButton, Qt::NoModifier, QPoint(-1, -1));
+                require(page.editorDialog && input->text() == "qqq", "a cancelled key release keeps the draft open");
+
+                QTest::mousePress(first, Qt::LeftButton);
+                QTest::mousePress(second, Qt::LeftButton);
+                QTest::mouseRelease(first, Qt::LeftButton);
+                require(page.editorDialog, "overlapping key presses do not dismiss the editor");
+                QTest::mouseRelease(second, Qt::LeftButton);
+                require(input->text() == "qqqw", "the remaining pressed key still enters its character");
+                for (int i = 0; i < 100; ++i) QTest::mouseClick(first, Qt::LeftButton);
+                require(page.editorDialog && input->text() == "qqqw" + QString(100, QChar('q')),
+                        "rapid key clicks continue editing after gaps and cancelled presses");
+                dialog->findChild<QPushButton *>("rrKosyncEditCancel")->click();
+                require(!page.editorDialog, "Cancel still closes the account editor");
+                QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            }
+        }
+    ui::setDensity(savedDensity);
+}
 }
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
@@ -37,6 +102,35 @@ int main(int argc, char **argv) {
     app.setPalette(ui::readerPalette(app.palette(), false));
     ui::setInterfaceWeight(ui::heavierTextSteps);
     require(ui::initializeInterfaceFonts(test::readerAssets()), "load the production interface fonts");
+    checkKeyboardInputStaysInEditor();
+    {
+        QWidget host;
+        host.resize(1072, 1448);
+        host.show();
+        reader::KosyncNotice notice(&host);
+        notice.show();
+        notice.fitCard();
+        require(notice.primaryButton()->isVisible(), "in-flight sync offers cancellation");
+        int completions = 0;
+        notice.completed = [&] { ++completions; notice.hide(); };
+        QElapsedTimer elapsed;
+        elapsed.start();
+        notice.complete();
+        require(notice.completing(), "success has a pending automatic dismissal");
+        require(notice.findChild<QLabel *>("rrModalTitle")->text() == strings::get("kosync.completed") &&
+                notice.descriptionLabel()->text() == strings::get("kosync.up_to_date") &&
+                !notice.primaryButton()->isVisible(), "successful sync shows confirmation without a button");
+        QTest::qWait(1000);
+        require(notice.isVisible() && completions == 0, "success does not disappear immediately");
+        require(QTest::qWaitFor([&] { return completions == 1; }, 2000) && elapsed.elapsed() >= 1500,
+                "success automatically dismisses after at least 1.5 seconds");
+        notice.show();
+        notice.complete();
+        notice.hide();
+        require(!notice.completing(), "hidden notices release their pending confirmation");
+        QTest::qWait(1600);
+        require(completions == 1, "hiding the success notice cancels its dismissal timer");
+    }
     {
         const int savedDensity = ui::density();
         for (int ppi : {212, 300})
@@ -47,7 +141,10 @@ int main(int argc, char **argv) {
                 host.setFont(ui::interfaceFont());
                 ui::applyReaderPalette(&host, ui::readerPalette(host.palette(), dark));
                 ui::readerStyle(&host, ui::styles::reader());
-                reader::KosyncPage page(&host, &host, {});
+                int destroyed = 0;
+                reader::KosyncPage page(&host, &host, [&](QWidget *parent, QLineEdit *) {
+                    return std::make_unique<Keyboard>(destroyed, parent);
+                });
                 host.resize(ui::px(800), ui::px(2000));
                 page.resize(host.size());
                 host.show();
@@ -78,6 +175,29 @@ int main(int argc, char **argv) {
                         require(QDir().mkpath(output), "Cannot create Sync capture directory");
                         require(image.save(output + QString("/%1-%2-%3.png").arg(name).arg(ppi).arg(dark ? "dark" : "light")),
                                 "Cannot save Sync action capture");
+                    }
+                }
+                page.findChild<QPushButton *>("rrKosyncPassword")->click();
+                auto *reveal = page.editorDialog->findChild<QPushButton *>("rrKosyncPasswordReveal");
+                auto *input = page.editorDialog->findChild<QLineEdit *>("rrKosyncInput");
+                input->setText("sample-password");
+                for (const auto size : {QSize(800, 1136), QSize(1136, 800)}) {
+                    host.resize(ui::px(size.width()), ui::px(size.height()));
+                    page.resize(host.size());
+                    QApplication::processEvents();
+                    for (bool shown : {false, true}) {
+                        reveal->setChecked(shown);
+                        QApplication::processEvents();
+                        const auto *card = page.editorDialog->card();
+                        require(card->geometry().bottom() < host.height() / 2,
+                                "password editor fits above the keyboard in both themes, densities and orientations");
+                        require(input->width() > ui::px(100) && input->geometry().right() < reveal->geometry().left(),
+                                "reveal control leaves room for password input");
+                        const auto output = qEnvironmentVariable("KOBALT_TEST_CAPTURE_DIR");
+                        if (!output.isEmpty())
+                            require(host.grab().save(output + QString("/password-%1-%2-%3-%4.png")
+                                .arg(ppi).arg(dark ? "dark" : "light").arg(size.width()).arg(shown ? "shown" : "masked")),
+                                    "save password editor capture");
                     }
                 }
             }
@@ -189,7 +309,53 @@ int main(int argc, char **argv) {
     require(editor->echoMode() == QLineEdit::Password && editor->inputMethodHints().testFlag(Qt::ImhSensitiveData),
             "password entry hides characters and disables keyboard learning");
     editor->setText("private-test-password");
+    auto *reveal = page->editorDialog->findChild<QPushButton *>("rrKosyncPasswordReveal");
+    require(reveal && !reveal->isChecked() && reveal->text() == "Show" && reveal->accessibleName() == "Show password",
+            "password reveal is explicit and masked by default");
+    const auto *originalKeyboard = keyboard;
+    editor->setSelection(3, 5);
+    const int cursor = editor->cursorPosition();
+    const int selection = editor->selectionStart();
+    const auto inputBounds = editor->geometry();
+    const auto revealBounds = reveal->geometry();
+    QTest::mouseClick(reveal, Qt::LeftButton);
+    QApplication::processEvents();
+    require(reveal->isChecked() && reveal->text() == "Hide" && reveal->accessibleName() == "Hide password" &&
+            editor->displayText() == editor->text(), "Show reveals the existing password and updates its action");
+    require(editor->hasFocus() && keyboard == originalKeyboard && destroyed == 1 &&
+            editor->cursorPosition() == cursor && editor->selectionStart() == selection && editor->selectedText() == "vate-",
+            "tapping Show preserves focus, keyboard, cursor and selection");
+    require(editor->geometry() == inputBounds && reveal->geometry() == revealBounds,
+            "changing Show to Hide does not move or resize the input");
+    require(editor->inputMethodHints().testFlag(Qt::ImhSensitiveData) &&
+            editor->inputMethodHints().testFlag(Qt::ImhNoPredictiveText) &&
+            editor->inputMethodHints().testFlag(Qt::ImhNoAutoUppercase), "revealed passwords retain sensitive input hints");
+    QTest::mouseClick(reveal, Qt::LeftButton);
+    require(editor->echoMode() == QLineEdit::Password && editor->text() == "private-test-password",
+            "Hide masks the same password without changing it");
+    reveal->click();
+    QTest::keyClicks(editor, "x");
+    require(editor->text() == "prixtest-password", "typing after revealing replaces the retained selection");
+    editor->setText("private-test-password");
+    QMetaObject::invokeMethod(qApp, "applicationStateChanged", Qt::DirectConnection,
+                              Q_ARG(Qt::ApplicationState, Qt::ApplicationInactive));
+    require(editor->echoMode() == QLineEdit::Password && !reveal->isChecked(), "backgrounding masks the password");
+    reveal->click();
+    page->editorDialog->hide();
+    require(editor->echoMode() == QLineEdit::Password && !reveal->isChecked(), "hiding the editor masks the password");
+    page->editorDialog->show();
+    reveal->click();
     keyboard->submitted();
+    require(editor->echoMode() == QLineEdit::Password, "submission masks before deferred editor deletion");
+    QApplication::processEvents();
+    password->click();
+    editor = page->editorDialog->findChild<QLineEdit *>("rrKosyncInput");
+    reveal = page->editorDialog->findChild<QPushButton *>("rrKosyncPasswordReveal");
+    require(editor->echoMode() == QLineEdit::Password && !reveal->isChecked() && editor->text() == "private-test-password",
+            "reopening keeps the saved input masked");
+    reveal->click();
+    editor->setText("cancelled-password");
+    page->editorDialog->findChild<QPushButton *>("rrKosyncEditCancel")->click();
     QApplication::processEvents();
     QString submitted;
     page->loginRequested = [&] { submitted = page->takePassword(); };
@@ -310,6 +476,14 @@ int main(int argc, char **argv) {
     page->automaticChanged = [&](bool value) { autoChanged = !value; };
     automatic->click();
     require(autoChanged, "automatic sync toggle reaches the owner");
+    page->setAccount("https://sync.example/prefix", "reader", true, false);
+    require(automatic->accessibleDescription() == strings::get("kosync.manual_description"),
+            "manual mode shows its toolbar guidance");
+    page->setStatus({}, true);
+    require(!automatic->isEnabled() && !sync->isEnabled(), "busy sync blocks manual controls");
+    page->setNativeCloudSync(true);
+    require(!automatic->isVisible() && !sync->isVisible(), "Kobo-managed books hide manual sync controls");
+    page->setNativeCloudSync(false);
     page->setAccount({}, {}, false, false);
     panel.fitContent(window.size());
     QApplication::processEvents();

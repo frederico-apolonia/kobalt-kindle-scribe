@@ -63,7 +63,6 @@ DictionaryPanel::DictionaryPanel(QWidget *parent, KeyboardFactory makeKeyboard) 
     query->setObjectName("rrDictionaryQuery");
     query->setMaxLength(256);
     query->setAccessibleName(strings::get("dictionary_panel.lookup_word"));
-    query->setProperty("reader_keyboard_submit_text", QString::fromUtf8("✓"));
     query->setInputMethodHints(Qt::ImhNoPredictiveText | Qt::ImhNoAutoUppercase);
     query->setTextMargins(c::inset, 0, c::inset, 0);
     ui::readerStyle(query, "QLineEdit{border:none;padding:0;background:palette(window);" +
@@ -89,6 +88,7 @@ DictionaryPanel::DictionaryPanel(QWidget *parent, KeyboardFactory makeKeyboard) 
         // remains a compact sheet above it. Separate parents also keep key and
         // dictionary damage in separate refresh rectangles.
         keyboard = makeKeyboard(parent, query);
+        keyboard->setSubmitText(QString::fromUtf8("✓"));
         keyboard->submitted = [this] { submitQuery(); };
     }
     connect(dictionary, &QPushButton::clicked, this, [this] {
@@ -498,7 +498,9 @@ void DictionaryPanel::redrawChoices(bool atCurrent) {
     dropdown->raise();
 }
 void DictionaryPanel::refresh() {
-    pages->setPage(text->page(), text->pages());
-    pages->setVisible(!dropdown->isVisible() && text->pages() > 1);
+    // Counting the pages lays the text out and clamps its page first.
+    const int count = text->pages();
+    pages->setPage(text->page(), count);
+    pages->setVisible(!dropdown->isVisible() && count > 1);
 }
 }

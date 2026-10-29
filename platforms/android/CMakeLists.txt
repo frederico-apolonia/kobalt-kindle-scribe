@@ -56,6 +56,8 @@ option(KOBALT_COMMIT_MODIFIED "Source has uncommitted changes" OFF)
 configure_file("${source}/support/build_info.h.in" build_info.h @ONLY)
 
 file(GLOB_RECURSE shared CONFIGURE_DEPENDS "${source}/*.cpp" "${source}/*.h")
+# The scenario player is built only into evaluation builds.
+list(FILTER shared EXCLUDE REGEX "/src/scenario/")
 list(REMOVE_ITEM shared "${source}/publication/loopback.cpp" "${source}/assets/system_fonts.cpp")
 file(GLOB adapters CONFIGURE_DEPENDS "*.cpp" "*.h")
 qt_add_executable(kobalt_android ${shared} ${adapters})
@@ -93,7 +95,8 @@ set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/asset-manifest.json" PR
 qt_add_resources(kobalt_android android_manifest PREFIX "/android-assets" FILES "${CMAKE_CURRENT_BINARY_DIR}/asset-manifest.json")
 set(resources "${KOBALT_ROOT}/assets")
 file(GLOB notices CONFIGURE_DEPENDS "${resources}/notices/*")
-qt_add_resources(kobalt_android notices PREFIX "/kobalt" BASE "${resources}" FILES "${resources}/acknowledgments.json" ${notices})
+qt_add_resources(kobalt_android notices PREFIX "/kobalt" BASE "${resources}" FILES "${resources}/acknowledgments.json" ${notices}
+    "${resources}/samples/words-and-letters.html" "${resources}/samples/layout.html")
 
 if(KOBALT_ANDROID_RELEASE)
     set(KOBALT_ANDROID_PACKAGE com.nicoverbruggen.kobalt)

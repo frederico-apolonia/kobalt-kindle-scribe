@@ -1,4 +1,5 @@
 #include "services.h"
+#include "interfaces/reader/ui/controls/keyboard.h"
 #include "interfaces/reader/ui/style/fonts.h"
 #include <QGuiApplication>
 #include <QDesktopServices>
@@ -6,7 +7,11 @@
 #include <QLineEdit>
 #include <QPointer>
 #include <QTime>
+#ifdef Q_OS_MACOS
 #include <sys/sysctl.h>
+#else
+#include <QSysInfo>
+#endif
 
 namespace kobalt::desktop {
 namespace {
@@ -73,21 +78,7 @@ public:
         return result;
     }
 };
-class Keyboard final : public KeyboardController {
-public:
-    explicit Keyboard(QLineEdit *editor) : editor(editor) {}
-    bool show() override {
-        if (!editor)
-            return false;
-        editor->setFocus();
-        return true;
-    }
-    void hide() override {}
-    void place() override {}
 
-private:
-    QPointer<QLineEdit> editor;
-};
 class Presentation final : public WindowPresentation {
 public:
     void pauseBackground(bool) override {}
@@ -100,11 +91,15 @@ public:
 }
 ReaderHostServices readerServices() {
     ReaderHostServices result;
+#ifdef Q_OS_MACOS
     result.deviceName = QStringLiteral("Mac");
     char model[256] = {};
     size_t modelSize = sizeof(model);
     if (::sysctlbyname("hw.model", model, &modelSize, nullptr, 0) == 0 && modelSize > 1)
         result.deviceName = QString::fromLatin1(model, int(qMin(modelSize - 1, sizeof(model) - 1)));
+#else
+    result.deviceName = QSysInfo::prettyProductName();
+#endif
     result.colorDisplay = [] {
         return true;
     };
@@ -162,9 +157,7 @@ ReaderHostServices readerServices() {
     result.dictionary = [] {
         return std::make_unique<Dictionary>();
     };
-    result.keyboard = [](QWidget *, QLineEdit *editor) {
-        return std::make_unique<Keyboard>(editor);
-    };
+    result.keyboard = ui::makeWidgetKeyboard;
     result.presentation = [](QWidget *) {
         return std::make_unique<Presentation>();
     };

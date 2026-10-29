@@ -12,10 +12,12 @@
 #include "support/strings.h"
 #include "interfaces/reader/ui/style/styles.h"
 #include "interfaces/reader/ui/style/fonts.h"
+#include "interfaces/reader/ui/style/private_text.h"
 #include "interfaces/reader/window/font_registration.h"
 #include "platform/api/kobo_refresh.h"
 #include "support/diagnostics.h"
 #include "interfaces/reader/ui/style/metrics.h"
+#include "interfaces/reader/ui/panel_timing.h"
 #include "storage/reader_storage.h"
 #include "interfaces/reader/settings/settings_panel.h"
 #include "build_info.h"
@@ -23,6 +25,7 @@
 #include "reading/page_navigation.h"
 #include <QApplication>
 #include <QGridLayout>
+#include <QPainter>
 #include <QHBoxLayout>
 #include <QSlider>
 #include <QScreen>
@@ -44,6 +47,74 @@ using kobalt::Choice;
 using kobalt::ChoiceScreen;
 
 namespace {
+class ReturnTitle final : public ui::InterfaceLabel {
+public:
+    using ui::InterfaceLabel::InterfaceLabel;
+
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter painter(this);
+        painter.setFont(font());
+        const auto *button = qobject_cast<QPushButton *>(parentWidget());
+        const bool pressed = button && button->isEnabled() && button->isDown();
+        const auto colors = button ? button->palette() : palette();
+        painter.setPen(colors.color(!isEnabled() ? QPalette::Mid : pressed ? QPalette::Window
+                                                                            : QPalette::WindowText));
+        const auto bounds = contentsRect().adjusted(margin(), margin(), -margin(), -margin());
+        // Font line boxes include padding above and below the visible letters.
+        ui::drawOpticalText(painter, bounds.translated(0, m::chrome::returnTitleOffset), text(), true);
+    }
+};
+class ReturnButton final : public ui::Button {
+public:
+    ReturnButton(const QString &caption, QWidget *parent) : ui::Button(caption, parent) {
+        QImage mask(glyph, glyph, QImage::Format_ARGB32_Premultiplied);
+        mask.fill(Qt::transparent);
+        QPainter painter(&mask);
+        ui::controlIcon(ControlIcon::Back, Qt::black).paint(&painter, mask.rect());
+        painter.end();
+        for (int y = 0; y < mask.height(); ++y)
+            for (int x = 0; x < mask.width(); ++x)
+                if (qAlpha(mask.pixel(x, y))) arrowInk |= QRect(x, y, 1, 1);
+    }
+    int labelStart(const QFont &captionFont) const {
+        const int arrowLeft = (int(m::chrome::cellWidth) - glyph) / 2;
+        return arrowLeft + arrowInk.right() + 1 + int(m::chrome::returnLabelGap)
+               - ui::interfaceInkBounds(text(), captionFont).left();
+    }
+    QSize sizeHint() const override {
+        ensurePolished();
+        const auto content = layout() ? layout()->sizeHint() : QSize();
+        return {content.width(), qMax(content.height(), int(m::chrome::actionHeight))};
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override {
+        QPainter painter(this);
+        const bool pressed = isEnabled() && isDown();
+        const auto paper = palette().color(QPalette::Window);
+        const auto ink = palette().color(QPalette::WindowText);
+        painter.fillRect(rect(), pressed ? ink : paper);
+        const QRect iconCell(0, 0, m::chrome::cellWidth, height());
+        ui::paintEdges(painter, rect(), Qt::RightEdge, palette().color(QPalette::Mid));
+        if (!isEnabled()) painter.setOpacity(.45);
+        const auto *title = findChild<QLabel *>("rrReturnTitle");
+        qreal letterOffset = 0;
+        if (title && !title->text().isEmpty()) {
+            const auto word = ui::interfaceInkBounds(title->text(), title->font());
+            const auto first = ui::interfaceInkBounds(title->text().left(1), title->font());
+            letterOffset = (first.top() + first.bottom() - word.top() - word.bottom()) / 2.0;
+        }
+        const int top = qRound((height() - 1) / 2.0 + letterOffset - (arrowInk.top() + arrowInk.bottom()) / 2.0)
+                        + int(m::chrome::returnArrowOffset);
+        ui::controlIcon(ControlIcon::Back, pressed ? paper : ink)
+            .paint(&painter, QRect((iconCell.width() - glyph) / 2, top, glyph, glyph));
+    }
+
+private:
+    const int glyph = m::chrome::backIcon;
+    QRect arrowInk;
+};
 kobalt::ui::Button *iconButton(QWidget *parent, QBoxLayout *layout, const char *name, const QString &label,
                                ControlIcon icon, std::function<void()> action) {
     auto *button = static_cast<kobalt::ui::Button *>(makeButton(parent, layout, name, {}, std::move(action)));
@@ -69,6 +140,11 @@ Reader::Reader(std::unique_ptr<kobalt::ReadingBook> openedBook, kobalt::ReaderOr
     : ReaderWindow(nullptr, Qt::Window | Qt::FramelessWindowHint), services(std::move(hostServices)),
       book(std::move(openedBook)), model(book->session()), orientation(orientation) {
     Q_ASSERT(services.complete());
+    building.start();
+    // Qt 5.2 leaves default-constructed timers looking valid.
+    openingStarted.invalidate();
+    showing.invalidate();
+    turnStarted.invalidate();
     setObjectName("rrReader");
     setAttribute(Qt::WA_DeleteOnClose);
     presentation = services.presentation(this);
@@ -130,6 +206,10 @@ Reader::Reader(std::unique_ptr<kobalt::ReadingBook> openedBook, kobalt::ReaderOr
     // A highlight save on the writer thread failed and the saved list is back.
     highlights->saveFailed = [this] {
         kobalt::qt::later(0, this, [this] {
+            if (exitPending) {
+                failExit(closeRequest, strings::get("annotations.change_not_saved"));
+                return;
+            }
             showHighlightError();
         });
     };
@@ -156,6 +236,10 @@ Reader::Reader(std::unique_ptr<kobalt::ReadingBook> openedBook, kobalt::ReaderOr
     };
     bookmarks->failed = [this] {
         kobalt::qt::later(0, this, [this] {
+            if (exitPending) {
+                failExit(closeRequest, bookmarks->error());
+                return;
+            }
             showBookmarkError();
         });
     };
@@ -180,16 +264,31 @@ Reader::Reader(std::unique_ptr<kobalt::ReadingBook> openedBook, kobalt::ReaderOr
     setFont(kobalt::ui::interfaceFont());
     kobalt::ui::keepInterfaceUnhinted(this);
     readerStyle(this, styles::reader());
+    QElapsedTimer part;
+    part.start();
+    const auto built = [this, &part](const char *name) {
+        openingStages[QString("build_%1_ms").arg(QLatin1String(name))] = part.nsecsElapsed() / 1e6;
+        part.restart();
+    };
     buildReadingPage();
+    built("reading_page");
     startClockTimer();
     buildToolbar();
+    built("toolbar");
     buildBottomControls();
+    built("bottom_controls");
     const auto appearanceLayout = buildMenu();
+    built("menu");
     buildOverlays();
+    built("overlays");
     buildAppearance(appearanceLayout);
+    built("appearance");
     buildSettings();
+    built("settings");
     buildNotices();
+    built("notices");
     buildAnnotations();
+    built("annotations");
     connectLightGestures();
     configureNavigation();
     textRefresh(this);
@@ -260,6 +359,7 @@ Reader::Reader(std::unique_ptr<kobalt::ReadingBook> openedBook, kobalt::ReaderOr
         observeReading();
         book->checkpointReadingHistory(!services.suspended());
     });
+    openingStages["build_ms"] = building.nsecsElapsed() / 1e6;
 }
 
 void Reader::buildReadingPage() {
@@ -271,8 +371,8 @@ void Reader::buildReadingPage() {
     page->setFont(kobalt::ui::headerFooterFont());
     readerStyle(page, "font-family:@header-footer-font@;");
     dictionaryPanel = new kobalt::DictionaryPanel(this, services.keyboard);
-    dictionaryPanel->prepareEditorFont = [this](const QFont &font) {
-        registerEditorFont(font, registeredFonts);
+    dictionaryPanel->prepareEditorFont = [](const QFont &font) {
+        registerEditorFont(font);
     };
     dictionaryPanel->setDefinitionFont(settingsDictionaryFontFace, settingsDictionaryFontSize);
     dictionaryPanel->setLanguage(model->state().value("language").toString());
@@ -444,19 +544,37 @@ void Reader::buildToolbar() {
     toolbar->addLayout(top);
     top->setSpacing(m::panel::toolbarGap);
     updateMenuStatus();
-    auto *back = new kobalt::ui::BackButton(services.exitLabel.isEmpty() ? strings::get("reader.exit") : services.exitLabel, topControls);
-    back->setContentsMargins(0, 0, m::panel::exitLabelExtraRight, 0);
-    toolbarComposition.exitAction = back;
+    const auto returnLabel = services.backButtonLabel.isEmpty() ? strings::get("reader.exit") : services.backButtonLabel;
+    auto *back = new ReturnButton(returnLabel, topControls);
     back->setObjectName("rrReturn");
+    back->setAccessibleName(returnLabel);
+    back->setFocusPolicy(Qt::NoFocus);
+    readerStyle(back, "QPushButton{border:none;padding:0;min-width:0;min-height:0;}");
+    auto *returnRow = new QHBoxLayout(back);
+    returnRow->setContentsMargins(0, 0, 0, 0);
+    returnRow->setSpacing(0);
+
+    auto *returnTitle = new ReturnTitle(returnLabel, back);
+    returnTitle->setObjectName("rrReturnTitle");
+    returnTitle->setAttribute(Qt::WA_TransparentForMouseEvents);
+    returnTitle->setAlignment(Qt::AlignCenter);
+    returnTitle->setContentsMargins(0, 0, m::chrome::inset, 0);
+    readerStyle(returnTitle, styles::brand(m::chrome::titleText) + "background:transparent;");
+    returnTitle->ensurePolished();
+    returnRow->addSpacing(back->labelStart(returnTitle->font()));
+    returnRow->addWidget(returnTitle, 1);
+    toolbarComposition.exitAction = back;
     top->addWidget(back);
+    const auto repaintTitle = [returnTitle] { returnTitle->update(); };
+    connect(back, &QPushButton::pressed, returnTitle, repaintTitle);
+    connect(back, &QPushButton::released, returnTitle, repaintTitle);
     connect(back, &QPushButton::clicked, this, [this] {
         // The chapter list's close cell sits where Exit Kobalt is. A second
         // tap that lands after the list closed must not leave the reader.
-        if (exitGuarded)
+        if (exitGuarded && !exitGuardElapsed())
             return;
         close();
     });
-    readerStyle(back, "QPushButton#rrReturn{" + styles::brand(m::about::exitText) + "}");
     back->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
     top->addStretch(1);
     auto *lightButton = iconButton(topControls, top, "rrLight", strings::get("reader.brightness_and_warmth"),
@@ -499,6 +617,11 @@ void Reader::buildToolbar() {
         iconButton(topControls, top, "rrSearchOpen", strings::get("reader.search_book"), ControlIcon::Search, [this] {
             activateNavigation(kobalt::NavigationDestination::Search);
         });
+    toolbarComposition.sync =
+        iconButton(topControls, top, "rrKosyncManual", strings::get("kosync.sync_now"), ControlIcon::Sync, [this] {
+            requestManualKosync();
+        });
+    toolbarComposition.sync->hide();
     toolbarComposition.bookmarks =
         iconButton(topControls, top, "rrBookmarks", strings::get("reader.bookmarks"), ControlIcon::Bookmark, [this] {
             openBookmarks();
@@ -540,7 +663,7 @@ void Reader::buildToolbar() {
             continue;
         if (button->objectName() != "rrSettings" && button->objectName() != "rrBookmarks" &&
             button->objectName() != "rrAnnotate" && button->objectName() != "rrFormattingWarning" &&
-            button->objectName() != "rrSearchOpen")
+            button->objectName() != "rrSearchOpen" && button->objectName() != "rrKosyncManual")
             topActions.append(button);
         if (auto *action = dynamic_cast<kobalt::ui::Button *>(button))
             action->setPaintMode(kobalt::ui::ButtonPaintMode::ToolbarSquare);
@@ -900,8 +1023,8 @@ void Reader::buildAppearance(const kobalt::reader::AppearanceLayout &layout) {
     headerFooterRow = appearance.headerFooterRow;
     slotMap = appearance.slotMap;
     presetCards = appearance.presetCards;
-    headerSizeButtons = appearance.headerSizeButtons;
-    footerSizeButtons = appearance.footerSizeButtons;
+    headerSizeControl = appearance.headerSizeControl;
+    footerSizeControl = appearance.footerSizeControl;
     progressBarButtons = appearance.progressBarButtons;
     connect(headerFooterRow, &QPushButton::clicked, this, [this] {
         openHeaderFooterView();
@@ -952,15 +1075,18 @@ void Reader::buildAppearance(const kobalt::reader::AppearanceLayout &layout) {
                 syncChromeControls();
             });
     };
-    for (auto *button : headerSizeButtons + footerSizeButtons) {
-        const bool footer = footerSizeButtons.contains(button);
-        const auto value = button->property("text_size").toString();
-        connect(button, &QPushButton::clicked, this, [editCustom, footer, value] {
-            editCustom([footer, value](kobalt::headerfooter::Layout &custom) {
-                (footer ? custom.footerSize : custom.headerSize) = value;
-            });
-        });
+    for (auto *control : {headerSizeControl, footerSizeControl}) {
+        const bool footer = control == footerSizeControl;
+        control->slider->committed = [this, footer](int value) {
+            auto text = page->chrome;
+            (footer ? text.footerEnabled : text.headerEnabled) = value != kobalt::headerfooter::offSize;
+            if (value != kobalt::headerfooter::offSize)
+                (footer ? text.footerSize : text.headerSize) = value;
+            if (model->temporaryTypography() || !saveChrome(chromePreset, nullptr, &text))
+                syncChromeControls();
+        };
     }
+
     for (auto *button : progressBarButtons) {
         const bool on = button->property("switch_on").toBool();
         connect(button, &QPushButton::clicked, this, [editCustom, on] {
@@ -1081,6 +1207,7 @@ void Reader::buildSettings() {
     denseGraphOption = settings->denseGraphOption;
     sleepScreenButton = settings->sleepScreenButton;
     sleepTileButton = settings->sleepTileButton;
+    sessionTimeoutButton = settings->sessionTimeoutButton;
     pageNavigationButton = settings->pageNavigationButton;
     tapZonesButton = settings->tapZonesButton;
     tappableLinksButton = settings->tappableLinksButton;
@@ -1102,41 +1229,47 @@ void Reader::buildSettings() {
         });
     });
     connect(settings->wordSpacingButton, &QPushButton::clicked, this, [this, settings] {
-        const int selected = settingsWordSpacing == 80 ? 0 : settingsWordSpacing == 120 ? 2 : 1;
-        const auto face = bookFace();
-        settings->showAdvancedTextChoices(SettingsPanel::AdvancedText::WordSpacing, selected, [this](int index) {
+        settings->showAdvancedTextChoices(SettingsPanel::AdvancedText::WordSpacing,
+            stylingChoice(int(SettingsPanel::AdvancedText::WordSpacing)), [this](int index) {
             settingsWordSpacing = 80 + index * 20;
-            showAdvancedText();
-        }, ui::fontSample(face));
+            showAdvancedText(int(SettingsPanel::AdvancedText::WordSpacing));
+        });
+    });
+    connect(settings->paragraphSpacingButton, &QPushButton::clicked, this, [this, settings] {
+        settings->showParagraphAdjustments(settingsParagraphSpacing, settingsParagraphIndent,
+            [this](int percent, int indent) {
+                settingsParagraphSpacing = percent;
+                settingsParagraphIndent = indent;
+                showAdvancedText();
+            });
     });
     connect(settings->trackingButton, &QPushButton::clicked, this, [this, settings] {
-        const int selected = settingsTracking == 15 ? 2 : settingsTracking == 5 ? 1 : 0;
-        const auto face = bookFace();
-        settings->showAdvancedTextChoices(SettingsPanel::AdvancedText::Tracking, selected, [this](int index) {
+        settings->showAdvancedTextChoices(SettingsPanel::AdvancedText::Tracking,
+            stylingChoice(int(SettingsPanel::AdvancedText::Tracking)), [this](int index) {
             settingsTracking = index == 2 ? 15 : index == 1 ? 5 : 0;
-            showAdvancedText();
-        }, ui::fontSample(face), model->alignment());
+            showAdvancedText(int(SettingsPanel::AdvancedText::Tracking));
+        }, model->alignment());
     });
     connect(settings->widowsOrphansButton, &QPushButton::clicked, this, [this, settings] {
-        const int selected = settingsWidowsOrphans == "allow" ? 2 : settingsWidowsOrphans == "avoid" ? 1 : 0;
-        settings->showAdvancedTextChoices(SettingsPanel::AdvancedText::Pagination, selected, [this](int index) {
+        settings->showAdvancedTextChoices(SettingsPanel::AdvancedText::Pagination,
+            stylingChoice(int(SettingsPanel::AdvancedText::Pagination)), [this](int index) {
             settingsWidowsOrphans = index == 2 ? "allow" : index == 1 ? "avoid" : "publisher";
-            showAdvancedText();
+            showAdvancedText(int(SettingsPanel::AdvancedText::Pagination));
         });
     });
     connect(settings->verticalSpacingButton, &QPushButton::clicked, this, [this, settings] {
-        const int current = settingsVerticalSpacing == "center" ? 2 : settingsVerticalSpacing == "expand" ? 1 : 0;
-        settings->showAdvancedTextChoices(SettingsPanel::AdvancedText::VerticalSpacing, current, [this](int index) {
-            settingsVerticalSpacing = QStringList{"off", "expand", "center"}.at(index);
-            showAdvancedText();
+        settings->showAdvancedTextChoices(SettingsPanel::AdvancedText::VerticalSpacing,
+            stylingChoice(int(SettingsPanel::AdvancedText::VerticalSpacing)), [this](int index) {
+            settingsVerticalSpacing = QStringList{"off", "center", "expand"}.at(index);
+            showAdvancedText(int(SettingsPanel::AdvancedText::VerticalSpacing));
         });
     });
     connect(settings->verticalSpacingScopeButton, &QPushButton::clicked, this, [this, settings] {
         settings->showAdvancedTextChoices(SettingsPanel::AdvancedText::VerticalSpacingScope,
-            settingsVerticalSpacingScope == "protection" ? 1 : 0, [this](int index) {
-                settingsVerticalSpacingScope = index ? "protection" : "all";
-                showAdvancedText();
-            });
+            stylingChoice(int(SettingsPanel::AdvancedText::VerticalSpacingScope)), [this](int index) {
+            settingsVerticalSpacingScope = index ? "protection" : "all";
+            showAdvancedText(int(SettingsPanel::AdvancedText::VerticalSpacingScope));
+        });
     });
     bionicOption = settings->bionicOption;
     refreshButton = settings->refreshButton;
@@ -1185,6 +1318,7 @@ void Reader::buildSettings() {
             openSettingsFont(appearance::fallbackFontKeys[index]);
         });
     }
+    settings->stylingHidden = [this] { cancelStylingSamples(); };
     connect(darkOption, &QCheckBox::clicked, this, [this](bool enabled) {
         applyDarkMode(enabled);
     });
@@ -1194,6 +1328,7 @@ void Reader::buildSettings() {
     connect(sleepScreenButton, &QPushButton::clicked, this, [this] {
         openSleepScreen();
     });
+    connect(sessionTimeoutButton, &QPushButton::clicked, this, [this] { openSessionTimeout(); });
     connect(sleepTileButton, &QPushButton::clicked, this, [this] {
         openSleepTile();
     });
@@ -1216,7 +1351,9 @@ void Reader::buildSettings() {
         openScreenRefresh();
     });
     connect(settings->openAcknowledgments, &QPushButton::clicked, this, [this] {
+        kobalt::ui::PanelTiming timing("acknowledgments");
         acknowledgments->open();
+        timing.finish(acknowledgments);
         for (auto *widget : acknowledgments->findChildren<QWidget *>())
             textRefresh(widget);
     });
@@ -1237,6 +1374,8 @@ void Reader::buildSettings() {
         bionicOption->setChecked(false);
         settingsVerticalSpacing = "off";
         settingsVerticalSpacingScope = "all";
+        settingsParagraphSpacing = -1;
+        settingsParagraphIndent = -1;
         showAdvancedText();
         screenRefreshMode = kobalt::ScreenRefresh::Smart;
         showScreenRefresh();
@@ -1249,8 +1388,10 @@ void Reader::buildSettings() {
         showProgressDebug();
     });
 #endif
-    connect(settingsPages, &QStackedWidget::currentChanged, this, [this](int) {
+    connect(settingsPages, &QStackedWidget::currentChanged, this, [this](int index) {
         fitSettings();
+        if (index == StylingSettings)
+            renderStylingSamples();
         refresh();
     });
 }
@@ -1507,11 +1648,13 @@ void Reader::showFontPicker() {
     }
     QString defaultFace = preferences.value("default_font_face").toString(kobalt::defaultFontFace);
     int defaultIndex = -1;
-    for (int i = 1; i < items.size(); ++i)
+    for (int i = 0; i < items.size(); ++i)
         if (items[i].value == defaultFace)
             defaultIndex = i;
-    if (defaultIndex < 0)
+    if (defaultIndex < 0) {
         defaultFace = kobalt::defaultFontFace;
+        defaultIndex = 1;
+    }
     const int embedded = state.value("embedded_font_count").toInt();
     auto serifFallback = state.value("serif_font_face").toString();
     if (serifFallback.isEmpty())
@@ -1520,16 +1663,18 @@ void Reader::showFontPicker() {
                                                     : strings::get("reader.embedded_fonts").arg(embedded))
                                    : strings::get("reader.no_embedded_fonts") + '\n' +
                                          strings::get("reader.uses_default_font").arg(fontDisplayName(serifFallback));
-    if (items.size() > 1)
-        items[1].detail = (defaultFace == kobalt::defaultFontFace ? strings::get("reader.default_font") : QString());
-    if (defaultIndex > 1)
-        items[defaultIndex].detail = strings::get("reader.default_font");
+    if (defaultIndex < items.size()) {
+        auto &detail = items[defaultIndex].detail;
+        if (!detail.isEmpty())
+            detail += '\n';
+        detail += strings::get("reader.default_font");
+    }
     Choice slot{QStringLiteral("Aa"), defaultFace, "rrFontDefaultSlot", strings::get("reader.recommended_fonts")};
     slot.detail = strings::get("reader.set_default_font");
     slot.placeholder = true;
     items.insert(qMin(2, items.size()), slot);
-    choices->defaultRequested = [this](const QString &face) {
-        showFontDefaultDialog(face);
+    choices->defaultRequested = [this](const QString &face, bool instructions) {
+        showFontDefaultDialog(face, instructions);
     };
     choices->selected = [this](const QString &face) {
         const auto *current = appearanceEdit.edited() && appearanceEdit.ready() ? appearanceEdit.preview() : model;

@@ -472,6 +472,19 @@ int main(int argc, char **argv) {
     kosync::Client reopened(path, nullptr, &network);
     require(reopened.signedIn() && reopened.deviceId() == client.deviceId(), "account and device ID survive restart");
     require(reopened.setAutomatic(false) && !reopened.automatic(), "automatic sync can be disabled");
+    require(reopened.setAutomatic(true) && !kosync::automaticPaused(), "automatic sync is not paused by default");
+    kosync::pauseAutomatic(true);
+    require(kosync::automaticPaused() && reopened.automatic(), "a paused run keeps the saved automatic setting");
+    kosync::pauseAutomatic(false);
+    require(!kosync::automaticPaused(), "automatic sync resumes after a paused run");
+    require(reopened.setAutomatic(false) && !reopened.automatic(), "automatic sync can be disabled again");
+    require(reopened.manualExplanation(), "older accounts explain manual sync on first use");
+    require(reopened.setManualExplanation(false), "manual sync explanation can be acknowledged");
+    kosync::Client explained(path);
+    require(!explained.manualExplanation() && !explained.automatic() && explained.signedIn(),
+            "manual sync acknowledgment survives restart without changing sync mode or account");
+    require(explained.setDeviceName("Manual reader") && explained.setAutomatic(true), "other account edits succeed");
+    require(!kosync::Client(path).manualExplanation(), "account edits preserve the manual sync preference");
     require(!client.lastSync().isValid(), "login alone does not count as a progress sync");
     require(client.recordSyncSuccess(), "successful progress exchange records a timestamp");
     const auto synced = client.lastSync();
@@ -655,6 +668,9 @@ int main(int argc, char **argv) {
     }
     save(path, R"({"schema":99,"private":"preserve"})");
     require(!reopened.setAutomatic(true), "newer account schema blocks writes even after client construction");
+    const bool explanation = reopened.manualExplanation();
+    require(!reopened.setManualExplanation(!explanation) && reopened.manualExplanation() == explanation,
+            "a rejected preference write preserves the explanation in memory");
     kosync::Client future(path, nullptr, &network);
     require(!future.signedIn() && !future.logout(), "unsupported saved account is not overwritten");
     return 0;

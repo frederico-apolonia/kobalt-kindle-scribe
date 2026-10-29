@@ -4,7 +4,9 @@
 #include "reading/page_navigation.h"
 #include "support/strings.h"
 #include "support/diagnostics.h"
+#include <QElapsedTimer>
 #include <QtMath>
+#include <initializer_list>
 #include <utility>
 
 namespace kobalt::reader {
@@ -109,7 +111,7 @@ void Reader::refresh() {
                              !general->isVisible() && !choices->isVisible() && !syncDialog && !kosyncDialog && !finishDialog &&
                              !services.suspended() && !applyingText && (model->turnDirection() != 0 || passageFrame) &&
                              nextImage.cacheKey() != previousPageImage);
-    if (!recordedOpening)
+    if (!recordedOpening && pagePainted)
         recordOpening();
     publishResize();
     if (appearanceEdit.finishPending() && appearanceEdit.ready()) {
@@ -250,8 +252,12 @@ void Reader::showPageImage(const QImage &nextImage) {
 }
 
 void Reader::paintTurn() {
-    page->progressFraction =
-        model->pages() > 0 ? qBound(qreal(0), qreal(model->page() + 1) / model->pages(), qreal(1)) : 0;
+    // render_ms ends here: the engine's page and the GUI thread's wait for it.
+    // paint_ms covers the damage, the paint and the flush that follow.
+    const double rendered = turnStarted.isValid() ? turnStarted.nsecsElapsed() / 1e6 : 0;
+    QElapsedTimer painting;
+    painting.start();
+    page->progressFraction = pageProgressFraction(model->page(), model->pages());
     page->preparedDamage = model->damage();
     page->preparedFrom = model->damageFrom();
     // The Refresh the screen setting decides which turns flash.
@@ -263,7 +269,11 @@ void Reader::paintTurn() {
                                                                                                     : "pages");
     page->refreshContent(true, true);
     if (turnStarted.isValid()) {
-        kobalt::diagnostic("page-turn-painted", {{"elapsed_ms", double(turnStarted.elapsed())}}, false);
+        kobalt::diagnostic("page-turn-painted",
+                           {{"elapsed_ms", turnStarted.nsecsElapsed() / 1e6},
+                            {"render_ms", rendered},
+                            {"paint_ms", painting.nsecsElapsed() / 1e6}},
+                           false);
         turnStarted.invalidate();
     }
     // The screen composes the flushed page from the event loop. Return
@@ -374,8 +384,7 @@ void Reader::syncReadingControls() {
     const auto chapter = model->chapterTitle().isEmpty() ? strings::get("reader.contents") : model->chapterTitle();
     chapterButton->setText(chapter);
     chapterButton->setAccessibleName(strings::get("reader.contents_detail").arg(chapter));
-    page->progressFraction =
-        model->pages() > 0 ? qBound(qreal(0), qreal(model->page() + 1) / model->pages(), qreal(1)) : 0;
+    page->progressFraction = pageProgressFraction(model->page(), model->pages());
     if (!model->busy())
         applyingText = false;
     refreshRenderNotice();
@@ -395,8 +404,9 @@ void Reader::syncReadingControls() {
                      panels->currentIndex() != kobalt::reader::TypographyPage);
     findChild<QPushButton *>("rrSettings")->setChecked(general->isVisible());
     const bool settingsOpen = general->isVisible();
-    for (auto *action : {toolbarComposition.exitAction, toolbarComposition.settings, toolbarComposition.bookmarks,
-                         toolbarComposition.annotate, toolbarComposition.search})
+    for (auto *action : std::initializer_list<QWidget *>{toolbarComposition.exitAction, toolbarComposition.settings,
+                                                       toolbarComposition.bookmarks, toolbarComposition.annotate,
+                                                       toolbarComposition.search})
         if (action)
             action->setVisible(!settingsOpen);
     toolbarComposition.formattingWarning->setVisible(!settingsOpen && model->formattingWarning());
@@ -494,7 +504,7 @@ void Reader::updateMenuStatus() {
         menuClock->setText(time);
     const auto battery = services.battery();
     menuBattery->setStatus(battery.percent, battery.charging);
-    const auto reading = book->readingMilliseconds();
+    const auto reading = book->sessionReadingMilliseconds();
     const auto session = reading > 300000 ? strings::get("reader.session_minutes").arg(reading / 60000) : QString();
     if (menuSession->text() != session)
         menuSession->setText(session);
@@ -505,7 +515,7 @@ void Reader::updateMenuStatus() {
 
 // Stats and the reading strips use the same platform or session estimates.
 void Reader::updateReadingStats() {
-    const auto reading = book->readingMilliseconds();
+    const auto reading = book->sessionReadingMilliseconds();
     const auto estimates = book->estimates();
     chapterGraph->setReading(int(reading / 60000), model->totalWords(), estimates.chapterMilliseconds,
                              estimates.bookMilliseconds);

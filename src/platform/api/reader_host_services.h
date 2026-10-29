@@ -36,6 +36,8 @@ struct WifiStatus {
 struct ReaderHostServices {
     // Human-readable model used for the default sync device name.
     QString deviceName;
+    // Standalone hosts return to their Library; Kobo uses the default exit label.
+    QString backButtonLabel;
     // Desktop-only presentation preferences; fixtures retain device chrome.
     bool desktopUi = false;
     // Kobo supplies its default export folder. Other hosts open a save-location picker.
@@ -51,9 +53,6 @@ struct ReaderHostServices {
     // Optional host-resolved high-resolution cover. The reader decodes it on
     // its worker and falls back to the publication cover if it is unusable.
     QString coverImagePath;
-    // Optional label for the reader's back button, for hosts where it returns to a library instead of leaving the
-    // application. Empty keeps "Exit Kobalt".
-    QString exitLabel;
     // Optional wording for the sleep screen choice that leaves the device's own screen in place. The default names
     // Kobo's built-in sleep screen. The description is shown with the label.
     QString stockSleepLabel, stockSleepDescription;

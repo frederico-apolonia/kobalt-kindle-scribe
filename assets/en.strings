@@ -24,11 +24,19 @@
 "kosync.automatic" = "Automatic sync";
 "kosync.automatic_description" = "Sync on open, close, sleep and wake, and while reading. Ask before moving to a synced position.";
 "kosync.sync_now" = "Sync now";
+"kosync.manual_description" = "With automatic sync disabled, a manual sync button is added to the top toolbar.";
+"kosync.manual_prompt" = "Would you like to sync progress with KOsync?";
+"kosync.manual_prompt_description" = "This button syncs progress when you choose. Automatic sync is disabled, so Kobalt will not sync on open, close, sleep or wake. Later taps sync immediately.";
+"kosync.show_password" = "Show";
+"kosync.hide_password" = "Hide";
+"kosync.show_password_accessible" = "Show password";
+"kosync.hide_password_accessible" = "Hide password";
 "kosync.signed_in" = "Signed in.";
 "kosync.account_changed" = "Sign in to apply the server or username change.";
 "kosync.signed_out" = "Not signed in.";
 "kosync.signing_in" = "Signing in…";
 "kosync.opening" = "Syncing…";
+"kosync.completed" = "Sync complete";
 "kosync.cancel_sync" = "Cancel sync";
 "kosync.opening_description" = "Kobalt is syncing your progress. Please wait...";
 "kosync.skipped" = "Sync skipped. Your position is saved locally.";
@@ -60,7 +68,6 @@
 "app.wordmark" = "Kobalt";
 
 /* android */
-"android.return" = "Kobalt";
 
 /* library */
 "library.title" = "Library";
@@ -74,6 +81,7 @@
 "library.more" = "More";
 "library.exit" = "Exit Kobalt";
 "library.front_light" = "Front light";
+"library.exit_to_library" = "Library";
 "library.view_home" = "Home";
 "library.view_list" = "List";
 "library.view_grid" = "Cover grid";
@@ -174,6 +182,7 @@
 "common.percent" = "%1%";
 "common.previous_page" = "Previous page";
 "common.size_large" = "Large";
+"common.size_extra_large_short" = "XL";
 "common.size_large_short" = "L";
 "common.size_medium" = "Medium";
 "common.size_medium_short" = "M";
@@ -360,6 +369,7 @@
 "header_footer.unavailable" = "—";
 "header_footer.uppercase" = "Uppercase";
 "header_footer.progress_bar" = "Progress bar";
+"header_footer.progress_bar_detail" = "% of book";
 /* Arguments: %1 */
 "header_footer.time_left" = "%1 left";
 "header_footer.learning_pace" = "Learning reading speed";
@@ -439,6 +449,14 @@
 /* opening */
 "opening.loading" = "Opening your book";
 "opening.may_take_a_while" = "This may take a while";
+"closing.saving" = "Saving your progress…";
+"closing.may_take_a_while" = "This may take a few moments.";
+"closing.failed" = "Couldn't save your progress";
+"closing.failed_detail" = "Your progress couldn’t be saved, so the book is still open. Please try again. If this keeps happening, back up your data.";
+"closing.retry" = "Retry save and close";
+"closing.quit" = "Quit without saving";
+"closing.quit_warning" = "Quitting now may lose unsaved progress or annotations.";
+"closing.return" = "Keep reading";
 
 /* reader */
 "reader.align_left" = "Align left";
@@ -500,10 +518,10 @@
 /* Arguments: %1 */
 "reader.make_default_font" = "Make %1 your default?";
 "reader.make_default" = "Make default";
-"reader.default_font_instructions" = "Long press another font to make it the default override for new books. The chosen font will show Default font below its name. Publisher Fonts keeps its automatic fallbacks.";
+"reader.default_font_instructions" = "Long press a font, including Publisher Fonts, to make it the default for new books. The chosen font will show Default font below its name. Publisher Fonts keeps the book’s fonts and automatic fallbacks.";
 /* Arguments: %1 */
 "reader.already_default_font" = "%1 is already your default font.";
-"reader.make_default_font_description" = "It will show Default font below its name and become the initial font override for new books. Publisher Fonts keeps its automatic fallbacks.";
+"reader.make_default_font_description" = "It will show Default font below its name and become the initial font choice for new books. Publisher Fonts keeps the book’s fonts and automatic fallbacks.";
 "reader.restore_default_font_description" = "Libron will become the initial font override for new books. Default font will appear below Libron.";
 "reader.font_weight" = "Variable weight:";
 "reader.font_thickness" = "Thickness: +";
@@ -519,6 +537,15 @@
 "reader.landscape" = "Landscape";
 "reader.landscape_upside_down" = "Landscape, upside down";
 "reader.line_spacing" = "Line spacing: ";
+"reader.publisher_spacing" = "Publisher";
+"settings.section_paragraphs" = "Paragraphs";
+"settings.paragraph_spacing" = "Paragraph adjustments";
+"settings.paragraph_spacing_summary" = "Adjust spacing and first-line indents.";
+"settings.paragraph_spacing_description" = "Values are percentages of the text size: with 12 pt text, a 100% indent is 12 pt. Applies to all books. Headings and special blocks keep their formatting.";
+"settings.paragraph_choices_description" = "Each Publisher choice keeps that part of the book’s formatting. Diagonal lines mark extra space between paragraphs.";
+"settings.paragraph_gap" = "Spacing";
+"settings.paragraph_indent" = "First-line indent";
+"settings.paragraph_adjustments_value" = "Gap %1 · Indent %2";
 "reader.margins" = "Horizontal margins: ";
 "reader.vertical_margins" = "Vertical margins: ";
 /* Arguments: %1, %2 */
@@ -606,6 +633,15 @@
 "settings.automatic_book_opening" = "Open books automatically in Kobalt";
 "settings.automatic_book_opening_description" = "Use Kobalt when opening supported books from your library. This is the same setting as in Kobo's Reading settings.";
 "settings.sleep_screen" = "Sleep screen";
+"settings.session_timeout" = "New session after sleep";
+"settings.session_timeout_description" = "Waking your device after this amount of time starts a new reading session. You do not need to close and reopen your book, this is automatic.";
+"settings.session_timeout_15" = "15 minutes";
+"settings.session_timeout_60" = "1 hour";
+"settings.session_timeout_240" = "4 hours";
+"settings.session_timeout_360" = "6 hours";
+"settings.session_timeout_720" = "12 hours";
+"settings.session_timeout_0" = "Never";
+"settings.session_timeout_never_description" = "A session always continues when the device wakes, even after a longer period of inactivity.";
 "settings.page_navigation" = "Page navigation";
 "settings.section_navigation_bar" = "Navigate panel";
 "settings.navigation_bar_buttons" = "Button action";
@@ -628,11 +664,12 @@
 "settings.section_frontlight" = "Frontlight";
 "settings.section_new_books" = "New Book";
 "settings.section_book_content" = "Book content";
-"settings.advanced_text" = "Advanced typography";
+"settings.section_words_letters" = "Words and letters";
+"settings.section_page_breaks" = "Page breaks";
+"settings.section_smart_styling" = "Smart styling";
+"settings.styling_preview_same" = "These sample pages look the same with every option.";
 "settings.justification_tracking" = "Justification tracking";
-/* Arguments: %1 (Justify icon) */
-"settings.justification_tracking_description" = "Only affects justified text. Select %1 in Text > Alignment. Distribute spare space between letters to reduce wide word gaps.";
-"settings.justification_tracking_off" = "Off";
+"settings.justification_tracking_off" = "Normal";
 "settings.justification_tracking_subtle" = "Subtle";
 "settings.justification_tracking_more" = "More";
 "settings.widows_orphans" = "Widows and orphans";
@@ -865,8 +902,12 @@
 "settings.inherit_header_footer" = "Inherit header and footer from the last book";
 "settings.inherit_header_footer_description" = "New books start with the last book's header and footer. Books with saved settings keep them.";
 
-"settings.avoid_wasteful_styling" = "Smart Styling";
-"settings.avoid_wasteful_styling_description" = "Kobalt will automatically improve book rendering appearance. If you prefer the original book CSS, disable this.";
+"settings.avoid_wasteful_styling" = "Reduce publisher spacing";
+"settings.avoid_wasteful_styling_description" = "Use Kobalt's page margins and reduce blank space at chapter starts.";
+"settings.avoid_wasteful_styling_changes" = "What this changes:";
+"settings.avoid_wasteful_styling_margins" = "Ignores the book's own page margins and padding, so your Layout margins apply.";
+"settings.avoid_wasteful_styling_breaks" = "Removes the space a book adds above text that starts on a new page, such as a chapter opening.";
+"settings.avoid_wasteful_styling_illustrations" = "Preserves the book's space above illustrations at chapter starts.";
 
 "settings.minimal_annotation_mode" = "Minimal annotation mode";
 "settings.minimal_annotation_mode_description" = "Hide the annotation bar. Tap text or blank space, then choose Stop highlighting to exit.";
@@ -974,9 +1015,9 @@
 "settings.hide_tab_labels" = "Hide labels in tabs";
 "settings.hide_tab_labels_description" = "Tabs at the bottom of the screen only display an icon when this is selected.";
 
-"settings.justification_tracking_summary" = "Reduce wide word gaps with letter spacing. Only affects justified text (Text > Alignment > Justify).";
+"settings.justification_tracking_summary" = "Adjust letter spacing in justified text.";
 
-"settings.widows_orphans_summary" = "Keep single paragraph lines from appearing alone at the top or bottom of a page.";
+"settings.widows_orphans_summary" = "Control single lines at page edges.";
 
 
 
@@ -993,7 +1034,7 @@
 
 "settings.widows_orphans_allow_description" = "Allow single lines at page boundaries.";
 "settings.word_spacing" = "Word spacing";
-"settings.word_spacing_summary" = "Adjust the normal width of spaces between words.";
+"settings.word_spacing_summary" = "Adjust spacing between words.";
 "settings.word_spacing_description" = "Change space width relative to the font’s normal spacing. This can change line breaks and page count. Justified lines may still stretch spaces. Applies to all books.";
 "settings.word_spacing_narrow" = "Narrow";
 "settings.word_spacing_normal" = "Normal";
@@ -1038,24 +1079,24 @@
 
 "settings.tappable_links" = "Tappable links";
 "settings.tappable_links_description" = "Choose how to open footnotes and links while reading.";
-"settings.tappable_links_off" = "Off";
+"settings.tappable_links_off" = "Always require long press";
 "settings.tappable_links_footnotes" = "Footnotes only";
 "settings.tappable_links_all" = "Footnotes and links";
-"settings.tappable_links_off_description" = "Long press and choose Follow link. Off by default to avoid accidental opening.";
+"settings.tappable_links_off_description" = "Long press and choose Follow link to avoid accidental opening.";
 "settings.tappable_links_footnotes_description" = "Tap footnotes to open them. Long press other links, then choose Follow link.";
 "settings.tappable_links_all_description" = "Tap footnotes and links to open them.";
 "settings.vertical_spacing" = "Vertical page spacing";
 "settings.vertical_spacing_mode" = "Page spacing";
 "settings.vertical_spacing_apply_to" = "Pages to adjust";
-"settings.vertical_spacing_description" = "Keep spacing unchanged, spread lines, or center nearly full prose pages.";
-"settings.vertical_spacing_off" = "Off";
+"settings.vertical_spacing_description" = "Adjust blank space on nearly full pages.";
+"settings.vertical_spacing_off" = "Normal";
 "settings.vertical_spacing_off_description" = "Keep the usual line spacing and top alignment.";
 "settings.vertical_spacing_expand" = "Expand line spacing";
 "settings.vertical_spacing_expand_description" = "Spread spare height between lines. Keep the first line in place.";
 "settings.vertical_spacing_center" = "Center nearly full pages";
 "settings.vertical_spacing_center_description" = "Center prose that occupies at least 90% of the reading height. Keep line spacing unchanged.";
 "settings.vertical_spacing_scope" = "Pages to adjust";
-"settings.vertical_spacing_scope_description" = "Choose which page gaps receive the selected adjustment.";
+"settings.vertical_spacing_scope_description" = "Choose which page gaps to adjust.";
 "settings.vertical_spacing_scope_all" = "All suitable pages";
 "settings.vertical_spacing_scope_all_description" = "Also adjust ordinary pagination gaps on nearly full prose pages.";
 "settings.vertical_spacing_scope_protection" = "Only widow/orphan gaps";
@@ -1092,3 +1133,10 @@
 "kosync.device_unknown" = "Unknown device";
 "kosync.time_unavailable" = "Sync time unavailable";
 "kosync.synced_at" = "Synced: %1";
+
+/* widget keyboard */
+"keyboard.shift" = "Shift";
+"keyboard.symbols" = "Symbols";
+"keyboard.space" = "Space";
+"keyboard.backspace" = "Backspace";
+"keyboard.done" = "Done";

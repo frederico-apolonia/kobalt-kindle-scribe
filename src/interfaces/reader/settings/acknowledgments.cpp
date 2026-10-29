@@ -10,6 +10,7 @@
 #include "interfaces/reader/ui/style/styles.h"
 #include "acknowledgments.h"
 #include "interfaces/reader/ui/style/metrics.h"
+#include "interfaces/reader/ui/panel_timing.h"
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -58,31 +59,35 @@ void LicenseText::setText(const QString &text) {
     }
     page = 0;
     document.setPlainText(lines.join('\n'));
-    paginate();
+    stale = true;
     update();
 }
 void LicenseText::changeEvent(QEvent *event) {
     // The document keeps the faces of its font. See refreshInterfaceText().
     if (event->type() == QEvent::FontChange) {
         document.setFont(kobalt::ui::renewedFont(document.font()));
-        paginate();
-        page = qBound(0, page, pages() - 1);
+        stale = true;
         update();
     }
     QWidget::changeEvent(event);
 }
-int LicenseText::pages() const {
+int LicenseText::pages() {
+    ensureLayout();
     return document.pages();
 }
 void LicenseText::resizeEvent(QResizeEvent *) {
-    paginate();
+    stale = true;
 }
-void LicenseText::paginate() {
+void LicenseText::ensureLayout() {
+    if (!stale)
+        return;
+    stale = false;
     const int margin = m::acknowledgments::textMargin;
     document.layout(qMax(1, width() - 2 * margin), qMax(1, height() - 2 * margin));
-    page = qBound(0, page, pages() - 1);
+    page = qBound(0, page, document.pages() - 1);
 }
 void LicenseText::paintEvent(QPaintEvent *) {
+    ensureLayout();
     QPainter painter(this);
     painter.fillRect(rect(), palette().color(QPalette::Window));
     const int margin = m::acknowledgments::textMargin;
@@ -161,6 +166,7 @@ void Acknowledgments::open() {
     raise();
 }
 void Acknowledgments::select(int index) {
+    ui::PanelTiming timing("licence");
     entry = index;
     const auto item = entries.at(index).toObject();
     const auto notices = item.value("notices").toArray();
@@ -182,6 +188,8 @@ void Acknowledgments::select(int index) {
     text->page = 0;
     text->setText(body);
     redraw();
+    timing.field("chars", body.size());
+    timing.finish(this);
 }
 void Acknowledgments::resizeEvent(QResizeEvent *) {
     if (entry < 0)
