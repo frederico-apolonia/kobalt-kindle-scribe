@@ -37,6 +37,8 @@ send() {
     scp -P "$PORT" -o ConnectTimeout=10 -r "$@"
 }
 require_idle() {
+    remote true 2>/dev/null ||
+        { echo "deploy: cannot reach the Kindle at $HOST:$PORT (asleep, Wi-Fi off, or SSH disabled)" >&2; exit 1; }
     remote '[ ! -d /var/tmp/kobalt-display.lock ] && ! pgrep -x kobalt >/dev/null' ||
         { echo "deploy: a Kobalt is running on the Kindle; exit it first (More > Exit Kobalt)" >&2; exit 1; }
 }

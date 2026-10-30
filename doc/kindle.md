@@ -11,7 +11,7 @@ The port is its own platform under `platforms/kindle/`. It reuses the shared rea
 - Automatic rotation between the two portrait orientations. The Amazon UI turns the framebuffer to follow the device (`/sys/class/graphics/fb0/rotate`: 3 with the device upright, 1 upside down) and the display turns with it, but the touch panel does not. Kobalt flips its picture when the device's pose and that rotation call for it, and flips touch exactly when the device is upside down, so it starts right whichever way the Amazon UI was turned when it was opened.
 - Front light brightness and warmth, in the reader and on the library's Settings page.
 - Battery percentage and charging state, in the reader's menu, in the header and footer fields and in the library's header, next to the clock.
-- A Settings page in the library (the gear in its header) with the front light, dark mode and the sleep screen choices, so none of them needs a book to be open.
+- A Settings page in the library (More > Settings) with the front light, dark mode and the sleep screen choices, so none of them needs a book to be open.
 - An on-screen keyboard for the library search and the in-book search, with letters, symbols and accented letters.
 - A sleep screen (book cover, or the dimmed page, with progress and battery) that stays on the panel while the device sleeps. Plugging the charger in or out while it sleeps redraws its status tile (Charging, the level, or Charged).
 - Images keep their proportions and are sized like KOReader's: CSS lengths use 160 ppi (`KOBALT_KINDLE_CSS_DPI`).
@@ -148,7 +148,7 @@ Nothing below touches the display or the Amazon UI. Run `kobalt` directly with `
 | `KOBALT_KINDLE_OPEN=<epub>` | Opens a book three seconds after start. |
 | `KOBALT_KINDLE_EXIT_AFTER=<s>` | Exits after that many seconds. |
 | `KOBALT_KINDLE_TYPE=<text>` | Taps the text out on the keyboard, in the library search or, with `KOBALT_KINDLE_OPEN`, the book search. `<shift>`, `<back>`, `<space>`, `<enter>`, `<?123>`, `<abc>`, `<áé>`, `<dismiss>` and `<submit>` name other keys and actions. |
-| `KOBALT_KINDLE_CLICK=<ms>:<name>[,<ms>:<name>...]` | Taps the visible button with that object name at each time (for example `librarySettings`, `librarySettingsBack`, `librarySetting_sleep`). |
+| `KOBALT_KINDLE_CLICK=<ms>:<name>[,<ms>:<name>...]` | Taps the visible button with that object name at each time (for example `libraryMore`, `libraryMoreSettings`, `librarySettingsBack`, `librarySetting_sleep`). |
 | `KOBALT_KINDLE_CLOSE=<ms>` | Closes the open book that long after start, as the back button does. |
 | `KOBALT_KINDLE_SLEEP=<ms>[,<ms>]` | Runs the sleep path that long after start, and the wake path at the second time. |
 | `KOBALT_KINDLE_TLSCHECK=<url>` | Fetches the URL once 1.5 seconds after start, logs the TLS library, the number of trusted CAs, the result and any certificate errors, then exits. |

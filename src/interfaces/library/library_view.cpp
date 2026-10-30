@@ -593,11 +593,13 @@ public:
         openBook = row("libraryMoreOpenBook", strings::get("library.open_book"), ui::ControlIcon::Dictionary, {});
         folders = row("libraryMoreFolders", strings::get("library.folders"), ui::ControlIcon::Folders,
                       ui::ListRow::Chevron{});
+        settings = row("libraryMoreSettings", strings::get("settings.title"), ui::ControlIcon::Settings,
+                       ui::ListRow::Chevron{});
         leave = row("libraryMoreExit", strings::get("library.exit"), ui::ControlIcon::Close, {});
         setDimmed(true);
         setProperty("reader_standard_modal", true);
     }
-    ui::ListRow *addFolder, *openBook, *folders, *leave;
+    ui::ListRow *addFolder, *openBook, *folders, *settings, *leave;
 };
 
 // The folders the library scans, with the controls to add, remove and rescan.
@@ -893,9 +895,6 @@ LibraryView::LibraryView(const Index &index, std::function<QString(const QString
     };
     search = cell(ui::ControlIcon::Search, "librarySearch", strings::get("library.search"));
     more = cell(ui::ControlIcon::More, "libraryMore", strings::get("library.more"));
-    settingsCell = cell(ui::ControlIcon::Settings, "librarySettings", strings::get("settings.title"));
-    // Shown once the host gives it something to open.
-    settingsCell->hide();
     closeSearch = cell(ui::ControlIcon::Close, "libraryCloseSearch", strings::get("library.close_search"));
     closeSearch->hide();
     query = new QLineEdit(this);
@@ -952,7 +951,6 @@ LibraryView::LibraryView(const Index &index, std::function<QString(const QString
         if (keyboard) keyboard->hide();
     });
     connect(more, &QPushButton::clicked, this, &LibraryView::showMoreSheet);
-    connect(settingsCell, &QPushButton::clicked, this, &LibraryView::showSettings);
     connect(sort, &QPushButton::clicked, this, [this] {
         if (sortSheet && sortSheet->isVisible()) {
             closeOverlay();
@@ -1278,13 +1276,8 @@ void LibraryView::arrange() {
     if (!searching) {
         x -= c::cellWidth;
         more->setGeometry(x, 0, c::cellWidth, bar);
-        if (hasHostSettings()) {
-            x -= c::cellWidth;
-            settingsCell->setGeometry(x, 0, c::cellWidth, bar);
-        }
     }
     more->setVisible(!searching);
-    settingsCell->setVisible(!searching && hasHostSettings());
     x -= c::cellWidth;
     (searching ? static_cast<QWidget *>(closeSearch) : static_cast<QWidget *>(search))
         ->setGeometry(x, 0, c::cellWidth, bar);
@@ -1337,8 +1330,8 @@ void LibraryView::paintEvent(QPaintEvent *event) {
         return;
     const int bar = c::actionHeight - c::heavyRule;
     const int left = c::inset;
-    // Search, Settings and More sit left of the clock and battery, which take the right edge of the header.
-    const int right = width() - (hasHostSettings() ? 3 : 2) * c::cellWidth - statusReserve() - c::inset;
+    // Search and More sit left of the clock and battery, which take the right edge of the header.
+    const int right = width() - 2 * c::cellWidth - statusReserve() - c::inset;
     if (!statusArea().isEmpty())
         paintStatus(painter, ink, ui::themeColors(dark).paper);
     auto titleFont = ui::brandFont(c::titleText);
@@ -1633,6 +1626,10 @@ void LibraryView::showMoreSheet() {
             closeOverlay();
             showFolders();
         });
+        connect(moreSheet->settings, &QPushButton::clicked, this, [this] {
+            closeOverlay();
+            showSettings();
+        });
         connect(moreSheet->leave, &QPushButton::clicked, this, [this] {
             closeOverlay();
             if (exitApp)
@@ -1642,6 +1639,7 @@ void LibraryView::showMoreSheet() {
     }
     moreSheet->addFolder->setVisible(bool(addFolder));
     moreSheet->openBook->setVisible(bool(openFile));
+    moreSheet->settings->setVisible(hasHostSettings());
     moreSheet->leave->setVisible(bool(exitApp));
     moreSheet->setGeometry(rect());
     moreSheet->fitCard();
