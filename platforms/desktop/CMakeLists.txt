@@ -311,6 +311,14 @@ if(BUILD_TESTING)
     set_target_properties(kobalt-regression-runtime PROPERTIES AUTOMOC OFF)
     target_link_libraries(kobalt-regression-runtime PUBLIC kobalt-core)
     add_custom_target(kobalt-tests DEPENDS kobalt-desktop-tests kobalt-eval-compare)
+    add_executable(kobalt-startup-recovery-tests "${KOBALT_ROOT}/tests/startup_recovery.c"
+        "${KOBALT_ROOT}/platforms/kobo/common/startup_recovery.c")
+    set_target_properties(kobalt-startup-recovery-tests PROPERTIES AUTOMOC OFF)
+    target_include_directories(kobalt-startup-recovery-tests PRIVATE "${KOBALT_ROOT}")
+    target_compile_options(kobalt-startup-recovery-tests PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(kobalt-tests kobalt-startup-recovery-tests)
+    add_test(NAME platform.startup-recovery COMMAND kobalt-startup-recovery-tests)
+    set_tests_properties(platform.startup-recovery PROPERTIES LABELS "platform" TIMEOUT 30)
     add_test(NAME build.eval-device-outcomes COMMAND "${CMAKE_COMMAND}"
         "-DTEST_EXECUTABLE=${CMAKE_COMMAND}"
         "-DTEST_ARGUMENTS=-DCOMPARE=$<TARGET_FILE:kobalt-eval-compare>;-P;${KOBALT_ROOT}/tests/eval_device_outcomes.cmake"
@@ -362,8 +370,20 @@ if(BUILD_TESTING)
             LABELS "lifecycle;integration" TIMEOUT 125)
     endforeach()
     add_executable(kobalt-shutdown-tests "${KOBALT_ROOT}/tests/kobo_shutdown.cpp"
+        "${KOBALT_ROOT}/platforms/kobo/common/startup_recovery.c"
         "${KOBALT_ROOT}/platforms/kobo/common/native_lifecycle.cpp"
         "${KOBALT_ROOT}/platforms/kobo/common/screensaver_compatibility.cpp")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(kobalt-screensaver-loader-tests "${KOBALT_ROOT}/tests/screensaver_loader.cpp"
+            "${KOBALT_ROOT}/platforms/kobo/common/screensaver_compatibility.cpp")
+        target_include_directories(kobalt-screensaver-loader-tests PRIVATE "${KOBALT_ROOT}" "${KOBALT_ROOT}/src")
+        target_link_libraries(kobalt-screensaver-loader-tests PRIVATE Qt6::Core ${CMAKE_DL_LIBS})
+        target_link_options(kobalt-screensaver-loader-tests PRIVATE "-Wl,--wrap=dl_iterate_phdr,--wrap=dlopen")
+        target_compile_options(kobalt-screensaver-loader-tests PRIVATE -Wall -Wextra -Werror)
+        add_dependencies(kobalt-tests kobalt-screensaver-loader-tests)
+        add_test(NAME platform.screensaver-loader COMMAND kobalt-screensaver-loader-tests)
+        set_tests_properties(platform.screensaver-loader PROPERTIES LABELS "platform" TIMEOUT 30)
+    endif()
     add_library(kobalt-screensaver-fixture SHARED "${KOBALT_ROOT}/tests/support/screensaver_fixture.cpp")
     target_include_directories(kobalt-screensaver-fixture PRIVATE "${KOBALT_ROOT}")
     target_compile_definitions(kobalt-shutdown-tests PRIVATE
@@ -487,6 +507,7 @@ if(BUILD_TESTING)
                 set_target_properties(kobalt-${name}-tests PROPERTIES AUTOMOC ON ENABLE_EXPORTS ON)
             elseif(check STREQUAL "native_lifecycle")
                 target_sources(kobalt-${name}-tests PRIVATE "${KOBALT_ROOT}/platforms/kobo/common/native_lifecycle.cpp"
+                    "${KOBALT_ROOT}/platforms/kobo/common/startup_recovery.c"
                     "${KOBALT_ROOT}/platforms/kobo/common/screensaver_compatibility.cpp"
                     "${KOBALT_ROOT}/platforms/kobo/common/native_lifecycle.h")
                 target_link_libraries(kobalt-${name}-tests PRIVATE kobalt-regression-runtime Qt6::Widgets Qt6::Sql)
@@ -580,7 +601,7 @@ if(BUILD_TESTING)
     kobalt_regressions(model font_axes touch_rotation)
     kobalt_regressions(platform reader_orientation font_sources system_fonts nickel_dictionary_selection
         nickel_reading_pace_cache nickel_reading_save nickel_session_calls nickel_book_menu native_progress native_sync_network native_lifecycle usb_removal page_transition_native)
-    kobalt_regressions(engine vertical_spacing source_index columns advanced_text paragraph_spacing alignment indentation page_layout vertical_writing mathml line_breaking
+    kobalt_regressions(engine vertical_spacing source_index columns advanced_text paragraph_spacing beautifier alignment indentation page_layout vertical_writing mathml line_breaking
         fallback_styles svg_limits image_proportions whitespace links search word_selection reader publisher_markup local_reader document_word_count document_cache)
     kobalt_regressions(component ui acknowledgments kosync_ui)
     target_link_libraries(kobalt-kosync-ui-tests PRIVATE Qt6::Test)

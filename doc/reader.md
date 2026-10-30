@@ -55,7 +55,11 @@ Kobalt uses two session markers:
 - `startup-session` exists during a synchronous initialization attempt. A crash during that attempt leaves the marker. Waiting for Nickel or a usable screen, or deferring a completed attempt, does not leave it.
 - `active-session.json` exists while a book is open or opening. A clean exit, a cancelled opening, a fallback to Nickel, power-off and reboot remove it.
 
-If `startup-session` is present at startup, Kobalt stays inactive and Nickel keeps its reader to prevent a startup crash loop. Read the event log first. Then stop Nickel, delete that marker and start Nickel again to retry Kobalt. A leftover `active-session.json` does not block startup. Kobalt can open a book again after an interrupted reading session or a forced reboot.
+The startup marker records an unfinished Kobalt initialization attempt. One interrupted attempt permits a retry. After two consecutive interrupted attempts, NickelHook removes Kobalt before loading Nickel libraries or installing hooks. A completed or deferred initialization, or a recognized normal shutdown, breaks the streak. A crash in the stock reader after Kobalt initialized does not count. The streak does not expire while the user waits or forces a restart after a hang. This is a narrow startup safeguard, not detection of every possible reboot loop.
+
+Removal preserves books, settings and reading data. Before removal, Kobalt tries to save `startup-removed.txt` in its support folder. This file explains the removal and how to retry by installing Kobalt again. A failed notice write does not block removal. Successful or deferred initialization clears the notice.
+
+An empty or damaged regular startup marker counts as one interrupted attempt and permits one retry. The exact unversioned marker and valid timestamped v1 markers remain supported. An unreadable or oversized marker, a directory or a symlink blocks initialization without requesting removal. Inspect the marker first, then stop Nickel and remove it to retry. A leftover `active-session.json` does not block startup.
 
 NickelHook also parks the library outside `imageformats` for the first three seconds after Nickel starts. A crash in that interval leaves the library parked and inactive. If the restore thread cannot start, the library stays parked for the next startup. Failed initialization restores installed hooks in their original libraries. Install a fresh package to recover. Do not move a parked library back by hand.
 
@@ -81,7 +85,7 @@ Support files are in `.adds/kobalt/`. Annotation exports are in `Kobalt/Annotati
 | `events.jsonl`, `events.jsonl.previous` | Event log, two files of at most 128 KiB each |
 | `scenarios/scenarios.json`, `scenarios.jsonl` | Evaluation packages only: the performance scenarios that Kobalt runs after the first book opens, and their results. See [Release evaluation](release-evaluation.md#device-scenarios) |
 | `state.json`, `session.json` | Reader state from the last close, sleep or shutdown, and session status. Create `live-state` to write `state.json` on every save instead |
-| `startup-session`, `active-session.json` | Recovery markers, see above |
+| `startup-session`, `startup-removed.txt`, `active-session.json` | Recovery markers, see above |
 | `uninstall`, `uninstall-now` | Removal control, see above |
 | `doc` | Short user instructions |
 
@@ -126,6 +130,14 @@ Closing a book keeps its parsed document in memory. Reopening the same unchanged
 On Kobo, closing a book also saves its parsed document and its pages in `.adds/kobalt/.cache/`. A later opening of the same unchanged book restores them instead of parsing and laying out the book again, also after a restart. Different typography or screen size reuses the parsed document and lays out only the pages. Kobalt still reads one chapter file through Nickel before it opens a cached book, so authorization is checked as for any other opening. A changed book file, a different Kobalt release version, or a different engine version opens without the old cache entry. After a successful cache save, Kobalt removes older cache entries for the same book. Entries for other books remain available. The cache holds at most 128 MiB and removes the oldest books first. With less than 256 MiB free on user storage, books open and close without it. A failed write to the cache leaves that entry unused and does not interrupt reading.
 
 Protected-book routing checks Adobe and LCP flags, Kobo key-record presence, and Tolino protection metadata on both firmware brands. Adobe DRM, Kobo DRM, Tolino encryption and unknown protection flags stay in the built-in reader. A watermark alone does not exclude a book. Protection queries read classifications and record presence, never key values. A metadata query failure keeps the built-in reader active.
+
+## Experimental book normalization
+
+Settings > Styling includes Book normalization (experimental). It is off by default and applies to all books. Open its modal to choose opening-letter normalization, paragraph-gap removal and first-line indentation independently. Each rule has a title, description and checkbox. Checked rules apply directly. All rules are unchecked by default; unchecking every rule turns the feature off. Cancel discards modal edits; Done keeps them in Settings. Closing Settings saves and applies the choices.
+
+When selected, the paragraph rules give recognized ordinary paragraphs a 1.2 em first-line indent and remove their bottom gaps. Text-initial normalization is independent of these paragraph rules. Recognized text initials and CSS first letters lose their enlarged size and float wherever they appear, including after a subtitle, in short paragraphs and in quotations. Characters and image-based initials stay unchanged. Explicit paragraph spacing and indentation settings take precedence. The paragraph rules leave headings, quotations, verse, tables, right-aligned text, hanging indents and paragraphs with leading gaps unchanged. Short or uncertain paragraphs also keep their spacing and indentation. Recognition does not cover every publisher convention.
+
+Kobo spans and their IDs stay intact, including in kepubify conversions. The original EPUB is never rewritten. Turning the option off restores the current Kobalt styling. Changing the mode reflows pages while retaining the source reading anchor.
 
 ## Reading position and progress
 
@@ -491,7 +503,7 @@ Fonts with an optical-size axis show an Optical size slider below Text size. The
 
 ## Progress sync
 
-Open Settings → Sync to sign in with an existing KOsync account. Sign in, Sync now, Sign out and Learn more use left-aligned, vertically centered labels, with the same inset as the account rows. Enter your server URL; it is blank until configured. The server must use HTTPS. Include a path prefix if the server is hosted under one. Do not include credentials, a query or a fragment in the URL. Kobalt does not register new accounts. Device name defaults to the detected model followed by “(Kobalt)”. Edit it to choose a custom name, or clear the field to restore the default. Mac uses its hardware model identifier; unrecognized Kobo models use “Kobo (Kobalt)”. The device ID stays the same when the name changes. The Sync page shows the last successful progress sync for this account on this device in local time. This timestamp survives restarts. Failed or cancelled attempts do not change it.
+Open Settings → Sync to sign in with an existing KOsync account. Sign in, Sync now, Sign out and Learn more use left-aligned, vertically centered labels, with the same inset as the account rows. Enter your server URL. Until a server is set, the field starts with `https://`. Saving only that prefix leaves the server unset. The server must use HTTPS. Include a path prefix if the server is hosted under one. Do not include credentials, a query or a fragment in the URL. Kobalt does not register new accounts. Device name defaults to the detected model followed by “(Kobalt)”. Edit it to choose a custom name, or clear the field to restore the default. Mac uses its hardware model identifier; unrecognized Kobo models use “Kobo (Kobalt)”. The device ID stays the same when the name changes. The Sync page shows the last successful progress sync for this account on this device in local time. This timestamp survives restarts. Failed or cancelled attempts do not change it.
 
 Without a successfully authenticated account, KOsync does not start periodic checks, prepare a network connection, delay opening or show a sync prompt. Signing out or disabling automatic sync stops the periodic timer. With automatic sync disabled, eligible books show a manual sync button beside Search in the top toolbar. The button is hidden when signed out or when automatic sync is enabled. The first tap explains manual sync and offers Sync now or Cancel. Confirming remembers the explanation; later taps sync immediately. Cancel keeps the explanation for the next tap. Manual mode does not sync on open, close, sleep or wake. Signing in prepares a connection only after the user requests it.
 

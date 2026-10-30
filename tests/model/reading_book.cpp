@@ -18,6 +18,7 @@
 #include "publication/native_archive.h"
 #include <QEventLoop>
 #include <QDir>
+#include <QDateTime>
 #include <QFile>
 #include <QGuiApplication>
 #include <QJsonDocument>
@@ -313,6 +314,9 @@ int main(int argc, char **argv) {
             int failures = 0;
             ReadingBook book(std::move(session), statePath, paths, identity, hash, nullptr, {}, {});
             book.onCheckpointFailed([&] { ++failures; });
+            require(!book.session()->state().value("beautifier_initials").toBool(), "Beautifier must default off");
+            require(book.session()->setBookBeautifier(true), "Cannot enable beautifier");
+            waitUntil([&] { return !book.session()->busy(); });
             require(book.saveDictionaryChoice({}), "Cannot clear an imported dictionary choice");
             QJsonObject snapshot;
             require(book.checkpoint(&snapshot), "Cannot save imported checkpoint fields");
@@ -320,6 +324,11 @@ int main(int argc, char **argv) {
             require(saved.value("future_optional") == optional && saved.contains("future_null") &&
                         saved.value("future_null").isNull(), "Opening checkpoint lost optional fields");
             require(!saved.contains("dictionary_id"), "Checkpoint restored a cleared dictionary choice");
+            require(saved.value("beautifier_initials").toBool(), "Checkpoint lost beautifier rendering state");
+            {
+                auto reopened = open(QSize(758, 900), saved, identity, positions);
+                require(reopened->state().value("beautifier_initials").toBool(), "Reopen lost beautifier rendering state");
+            }
             require(snapshot.contains("chapter_title") && snapshot.contains("cached_pages") &&
                         snapshot.contains("page"), "Inspection snapshot lost display fields");
             // A display title can exceed the saved-record budget without
@@ -401,7 +410,12 @@ int main(int argc, char **argv) {
         require(storage::writeJson(paths.preferences(),
                                    qt::object({{"show_clock", false}, {"header_text_size", "large"}, {"orientation", 2}})),
                 "Cannot save global layout");
-        ReadingBook local(std::move(session), paths.bookState("local-id"), paths, "local-id", hash, nullptr, {}, {});
+        // History work may cross a clock tick after the stop boundary.
+        bool delayHistoryClock = false;
+        ReadingBook local(std::move(session), paths.bookState("local-id"), paths, "local-id", hash, nullptr, {}, {}, {}, [&] {
+            if (delayHistoryClock) QThread::msleep(10);
+            return QDateTime::currentMSecsSinceEpoch();
+        });
         require(local.saveDictionaryChoice("test-dictionary"), "Cannot save dictionary choice");
         QJsonObject layoutSnapshot;
         require(local.checkpoint(&layoutSnapshot), "Cannot checkpoint book layout");
@@ -428,7 +442,9 @@ int main(int argc, char **argv) {
         require(!local.readProgress().valid && !local.pendingProgress(), "Local book invented external progress");
         local.observeReading();
         tick();
+        delayHistoryClock = true;
         local.stopReading();
+        delayHistoryClock = false;
         auto active = local.readingMilliseconds();
         require(active > 0, "Local reading time did not run without a bridge");
         require(local.tracksReadingHistory() &&
@@ -608,10 +624,15 @@ int main(int argc, char **argv) {
         auto session = open();
         const auto hash = session->sourceHash();
         ReadingBook book(std::move(session), paths.bookState("sleep-history"), paths, "sleep-history", hash,
-                         nullptr, {}, {});
+                         nullptr, {}, {}, {}, [] {
+                             QThread::msleep(10);
+                             return QDateTime::currentMSecsSinceEpoch();
+                         });
         book.observeReading(); tick();
         book.sleepReading({});
         const auto paused = book.readingMilliseconds();
+        require(historyValue("SELECT SUM(active_ms) FROM reading_sessions WHERE identity='sleep-history'").toLongLong() == paused,
+                "Sleep history and reading time used different stop boundaries");
         book.stopReading();
         book.checkpointReadingHistory();
         tick();
