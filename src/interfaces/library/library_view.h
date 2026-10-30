@@ -70,7 +70,7 @@ public:
         std::function<void(int)> choose;
     };
     // Hosts with settings the library can offer without a book open give them here: rows, and a factory for the
-    // front light controls (empty: none). A header cell opens the page; without either, there is no cell.
+    // front light controls (empty: none). A Settings row in the More sheet opens the page; without either, the row is hidden.
     void setHostSettings(QVector<HostOption> options, std::function<std::unique_ptr<LightControls>(QWidget *)> light);
 
     std::function<void(const QString &key)> openBook, removeFolder, removeBook;
@@ -111,7 +111,6 @@ private:
     std::function<HeaderStatus()> statusSource;
     QVector<HostOption> hostOptions;
     std::function<std::unique_ptr<LightControls>(QWidget *)> lightControls;
-    ui::CellButton *settingsCell;
     bool scanning = false, searching = false, dark = false;
     int found = 0;
     int statusReserve() const;

@@ -236,7 +236,7 @@ public:
                 });
             });
         // Test hook: KOBALT_KINDLE_CLICK="<ms>:<object name>[,<ms>:<object name>...]" taps the visible button with that
-        // object name at each time, as a finger would. Names are the ones the widgets carry, such as librarySettings.
+        // object name at each time, as a finger would. Names are the ones the widgets carry, such as libraryMore.
         for (const auto &step : qEnvironmentVariable("KOBALT_KINDLE_CLICK").split(',', Qt::SkipEmptyParts)) {
             const auto parts = step.split(':');
             if (parts.size() != 2)
