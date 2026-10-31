@@ -20,22 +20,24 @@ public:
     }
     void stop();
     void finish(std::function<void(bool)> done);
+    void retryFailedSave() { saves.retryFailed(); }
     bool savePending() const {
-        return ending || saves.pending();
+        // `ending` can retain a failed synchronous stop. It is not a worker
+        // using storage and must not keep a terminal handoff pending forever.
+        return startFlushes > 0 || (saves.pending() && !saves.failed());
     }
     std::function<void()> estimatesChanged;
 #ifndef KOBALT_READER_HARDWARE
     static void testCommand();
 #endif
 private:
-    // Fires the page event once the event worker has checked the account.
-    void report(bool signedIn, int words);
-    QString book, account;
+    // Fires the page event for the words on the page just left.
+    void report(int words);
+    QString book;
     double percent = 0;
     bool running = false, ending = false;
-    // Page reports check the account on Nickel's worker. A late result for
-    // an earlier session or a destroyed one is ignored.
-    int epoch = 0;
+    // Session-start flushes still running on Nickel's event thread.
+    int startFlushes = 0;
     std::shared_ptr<NativeReadingSession *> alive = std::make_shared<NativeReadingSession *>(this);
     nickel::PageReadingActivity activity_;
     nickel::ReadingPaceCache pace_;

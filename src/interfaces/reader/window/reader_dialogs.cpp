@@ -17,6 +17,7 @@
 #include "storage/reader_storage.h"
 #include <QDateTime>
 #include <QGridLayout>
+#include <utility>
 
 namespace kobalt::reader {
 namespace strings = kobalt::strings;
@@ -276,7 +277,7 @@ void Reader::buildProgressChoice(const kobalt::ReadingProgress &shown, int direc
             return;
         book->acknowledge(shown, false);
         dismissProgressChoice();
-        save();
+        save(false, true);
         refresh();
         progressTick();
     });
@@ -304,7 +305,7 @@ void Reader::buildProgressChoice(const kobalt::ReadingProgress &shown, int direc
             }
             book->acknowledge(shown, true);
             dismissProgressChoice();
-            save();
+            save(false, true);
         });
     });
     card->fitToWidth(qMin<int>(m::notice::cardWidth, width() - 2 * m::notice::sideClearance));
@@ -418,7 +419,7 @@ void Reader::showFinishChoice() {
         finishChoiceResolved = exitPending || finished;
         exitPending = exitPending || finished;
         updateOrientationBlock();
-        save();
+        save(false, true);
         refresh();
     };
     connect(choice->secondaryButton(), &QPushButton::clicked, this, [choose] {
@@ -597,6 +598,19 @@ void Reader::showBookmarkError() {
 void Reader::showHighlightError() {
     showAnnotationError(strings::get("annotations.change_not_saved"), strings::get("annotations.title"),
                         "rrHighlightError");
+}
+
+bool Reader::showNotice(const ReaderNotice &notice) {
+    if (notice.message.isEmpty() || annotationErrorDialog || closing || lifecycleHidden || services.suspended() ||
+        !isVisible())
+        return false;
+    showAnnotationError(notice.message, notice.title, notice.name);
+    return true;
+}
+
+void Reader::showStartupNotice() {
+    if (showNotice(services.startupNotice))
+        services.startupNotice = {};
 }
 
 // `name` names the notice; its message and button add `Message` and `Confirm`.
