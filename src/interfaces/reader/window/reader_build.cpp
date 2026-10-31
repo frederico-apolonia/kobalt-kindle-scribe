@@ -53,9 +53,12 @@ public:
 
 protected:
     void paintEvent(QPaintEvent *) override {
+        const auto *button = qobject_cast<QPushButton *>(parentWidget());
+        // A large interface scale can leave the button only the arrow's cell.
+        if (button && button->width() <= int(m::chrome::cellWidth))
+            return;
         QPainter painter(this);
         painter.setFont(font());
-        const auto *button = qobject_cast<QPushButton *>(parentWidget());
         const bool pressed = button && button->isEnabled() && button->isDown();
         const auto colors = button ? button->palette() : palette();
         painter.setPen(colors.color(!isEnabled() ? QPalette::Mid : pressed ? QPalette::Window
@@ -177,7 +180,7 @@ Reader::Reader(std::unique_ptr<kobalt::ReadingBook> openedBook, kobalt::ReaderOr
         appearance::rememberTextLayout(global, model->state());
         appearance::rememberPageMargins(global, model->state());
         if (global != savedSettings.object && !kobalt::storage::writePreferences(book->paths().preferences(), global)) {
-            kobalt::diagnostic("last-appearance-unsaved", {}, false);
+            kobalt::diagnostic("last-appearance-unsaved", {}, kobalt::DiagnosticSeverity::Error);
         }
     }
     bookmarks = std::make_unique<kobalt::BookmarkSession>(
@@ -213,10 +216,6 @@ Reader::Reader(std::unique_ptr<kobalt::ReadingBook> openedBook, kobalt::ReaderOr
             showHighlightError();
         });
     };
-    book->onCheckpointFailed([this] {
-        page->notice = strings::get("reader.could_not_save_reading_position");
-        page->refreshContent();
-    });
     bookmarks->changed = [this] {
         if (bookmarkList && bookmarkList->isVisible() && !bookmarkList->annotationsShown()) {
             bookmarkList->showBookmarks(bookmarkRows());
@@ -338,26 +337,21 @@ Reader::Reader(std::unique_ptr<kobalt::ReadingBook> openedBook, kobalt::ReaderOr
     });
     resize(QGuiApplication::primaryScreen()->size());
     prepareSleepCover();
-    if (services.observeBattery && presentation->supportsSleepScreen()) {
+    const auto battery = services.battery();
+    lowBattery = !battery.charging && !battery.fullyCharged && battery.percent >= 0 && battery.percent <= 5;
+    if (services.observeBattery) {
         services.observeBattery(this, [this] {
+            const auto battery = services.battery();
+            lowBattery = !battery.charging && !battery.fullyCharged && battery.percent >= 0 && battery.percent <= 5;
             updateSleepBattery();
         });
     }
+    book->onCheckpointFailed([this] { localSaveDue = true; });
     connectPageInput();
-    if (book->tracksReadingHistory()) {
-        auto *historyTimer = new QTimer(this);
-        historyTimer->setObjectName("rrReadingHistoryTimer");
-        historyTimer->setInterval(60000);
-        connect(historyTimer, &QTimer::timeout, this, [this] {
-            if (!closing && !lifecycleHidden && isVisible() && !services.suspended())
-                book->checkpointReadingHistory(true);
-        });
-        historyTimer->start();
-    }
     // Android can suspend the app without hiding the embedded reader widget.
     connect(qApp, &QGuiApplication::applicationStateChanged, this, [this] {
         observeReading();
-        book->checkpointReadingHistory(!services.suspended());
+        if (services.suspended()) book->checkpointReadingHistory();
     });
     openingStages["build_ms"] = building.nsecsElapsed() / 1e6;
 }
@@ -782,7 +776,7 @@ void Reader::buildOverlays() {
     });
     chapterGraph = new kobalt::ChapterGraph(this);
     chapterGraph->changed = [this] {
-        save();
+        saveSoon();
     };
     chapterGraph->setDense(preferences.value("dense_stats_chart").toBool(false));
     choices = new ChoiceScreen(this);
@@ -850,7 +844,7 @@ void Reader::buildOverlays() {
     choices->changed = [this] {
         if (choosingTypography && choices->isVisible())
             syncNavigation();
-        save();
+        saveSoon();
     };
     choices->back = [this] {
         choices->hide();
@@ -1324,6 +1318,7 @@ void Reader::buildSettings() {
             openSettingsFont(appearance::fallbackFontKeys[index]);
         });
     }
+    settings->stylingRequested = [this](SettingsPanel::AdvancedText feature) { renderStylingSamples(int(feature)); };
     settings->stylingHidden = [this] { cancelStylingSamples(); };
     connect(darkOption, &QCheckBox::clicked, this, [this](bool enabled) {
         applyDarkMode(enabled);
@@ -1395,10 +1390,8 @@ void Reader::buildSettings() {
         showProgressDebug();
     });
 #endif
-    connect(settingsPages, &QStackedWidget::currentChanged, this, [this](int index) {
+    connect(settingsPages, &QStackedWidget::currentChanged, this, [this](int) {
         fitSettings();
-        if (index == StylingSettings)
-            renderStylingSamples();
         refresh();
     });
 }

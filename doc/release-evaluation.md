@@ -83,7 +83,9 @@ All other scenarios come from `platforms/eval/scenarios.json` and run through th
 
 The scenarios cover book opening and closing, page turns, a page turn back into the previous chapter, the reading menu, a text-size change, long and short dictionary entries, a long footnote, Settings, Acknowledgments, the licence notice and memory use. The word-spacing and tracking scenarios open their Styling sheets and wait for the sample to paint. Their panel-open events use panel styling and include sample_ms for construction and the wait for the rendered sample. Pending sample renders, including cancelled jobs, keep the reader busy until their results reach the GUI thread. They use the benchmark book, a small notes fixture and War and Peace. On the Mac, a substituted dictionary service gives "set" a long entry and other words a short one, as a real English dictionary does.
 
-`book.open` closes the open book and opens it again, so the parsed book comes from the cache, and samples `reader-shown`. `book.close` turns a page and closes the book, and samples `book-close`. On the measured Mac, a close took about 125 ms while picker fonts were added to Qt's font database, because removing them made Qt rebuild that database. With private picker fonts it takes about 22 ms. `book.open.large` removes the disposable caches and opens War and Peace, so each sample parses and lays out the whole book. `reflow.font-size` taps the larger and smaller text-size buttons in the reading menu, in turn. While the menu is open, only a preview of the current chapter reflows, so the scenario times the menu's close until the reflowed book page has rendered. It also records the engine's `render_ms`. `memory.reading` records the resident size after the reading scenarios, and `memory.peak` the peak resident size at the end of the run, both in KiB. Both depend on what ran earlier in the process, so compare them only between runs with the same filter.
+`book.open` closes the open book and opens it again, so the parsed book comes from the cache, and samples `reader-shown`. `book.close` turns a page and closes the book, and samples `book-close`. On the measured Mac, a close took about 125 ms while picker fonts were added to Qt's font database, because removing them made Qt rebuild that database. With private picker fonts it takes about 22 ms. `book.open.large` removes the disposable caches and opens War and Peace, so each sample parses and lays out the whole book. `reflow.font-size` taps the larger and smaller text-size buttons in the reading menu, in turn. While the menu is open, only a preview of the current chapter reflows, so the scenario times the menu's close until the reflowed book page has rendered. It also records the engine's `render_ms`. `memory.reading` records the resident size after the reading scenarios, and `memory.peak` the peak resident size at the end of the run, both in KiB. Both depend on what ran earlier in the process, so compare them only between runs with the same filter. `memory.kobalt.reading` and `memory.kobalt.peak` record the same values minus the resident size when the first book began to open. The reader logs that base as `base_rss_kib` in a `memory-base` event. On a Kobo the base is Nickel with Kobalt loaded but not yet reading, so these two show Kobalt's own share without the host, and Qt 5 and Qt 6 compare directly. On the Mac the base is the app before its first book.
+
+The `panel.styling.widows` and `panel.styling.page-spacing` scenarios separate entry from prepared previews. The `.entry` timer starts before pressing Styling and ends when the preview has painted, including tab entry and preparation of the requested preview. Its stages also report the modal event and sample wait. The `.prepared` scenario opens and closes the requested sheet once before measuring cached reopening. Compare both metrics; timing only the modal can hide work moved into the tab.
 
 `panel-open` events time a panel from the input that opens it until its first paint has finished. They record `total_ms`, the synchronous `open_ms` and `paint_ms`, plus `range_ms` and `lookup_ms` for the dictionary and `details_ms` for a footnote. `page-turn-painted` records the turn until the page paints. `render_ms` ends when the reader starts to paint: it covers the engine's page and the wait on the GUI thread. `paint_ms` covers the changed area, the paint and the flush. On some screens the flush only queues the update, and the screen composes it on the GUI thread later. That time is not part of the event, but a following input waits for it.
 
@@ -98,7 +100,7 @@ The scenarios cover book opening and closing, page turns, a page turn back into 
 
 `sleep_capture_ms` measures the synchronous sleep backdrop capture. `sleep_dispatch_ms` measures handing that backdrop to the platform. Kobo's committed-token lookup and persistence run on a worker and can continue after `book-close`; they are not included in `sync_ms`.
 
-These events do not sync the log to storage, so they do not slow the reader. On Kobo, they are written only when diagnostics are enabled.
+These events do not sync the log to storage, so they do not slow the reader.
 
 ## Device scenarios
 
@@ -107,11 +109,11 @@ A Kobo runs the same scenario file through the same built-in player. `bash platf
 - the scenario player, compiled in;
 - the benchmark book in `kobalt-eval/`, a folder that the library lists;
 - the scenario file in `.adds/kobalt/scenarios/`;
-- `.adds/kobalt/diagnostics-enabled`.
+- `.adds/kobalt/diagnostics-enabled`, which adds the state and session reports.
 
 The release packages never contain these. Only books marked `"package": true` in the scenario file go into the package. The other books are not used on a Kobo, because the player cannot open them there.
 
-When diagnostics are on and the scenario file exists, the player starts two seconds after the first book opens in Kobalt, once per start of the reader. It writes one line per scenario to `.adds/kobalt/diagnostics/scenarios.jsonl`, after a header line with the target, version, firmware and model. That file does not rotate, unlike the event log. A `scenario-run-end` event marks the end.
+When the scenario file exists, the player starts two seconds after the first book opens in Kobalt, once per start of the reader. It writes one line per scenario to `.adds/kobalt/diagnostics/scenarios.jsonl`, after a header line with the target, version, firmware and model. That file does not rotate, unlike the event log. A `scenario-run-end` event marks the end. The reader then shows "Benchmark finished" or "Benchmark failed", with the number of completed, skipped and failed scenarios, the first failure and where to find the results over USB. A run fails when a scenario failed, no scenario ran or the results could not be saved. When the run lost its reader, the next opening shows the notice.
 
 On a Kobo, books open from the library. The player can close the first book and open it again from a copy of its opening request, but it cannot open another book. The large-book and footnote scenarios are skipped with that reason. Dictionary scenarios are skipped when no dictionary is installed. The player sends its presses directly to the widget under the point: Kobalt's touch filter on Qt 5 stops translating touch after it sees a synthesized mouse press in its windows.
 
@@ -132,6 +134,10 @@ The evaluation can also drive a device through an external runner, a program out
 ```
 
 The runner installs the package, opens the test book in Kobalt, waits for the `scenario-run-end` event and copies `scenarios.jsonl` into the output folder. It exits with zero when it wrote the file, even if a scenario failed. The comparator still reads `device.json` from runs recorded by an earlier runner.
+
+## Device reference
+
+`platforms/eval/devices/` keeps benchmark runs from real devices as a reference across devices. [Device benchmarks](device-benchmarks.md) explains the files and compares the devices.
 
 ## Sleep persistence benchmark
 
@@ -172,3 +178,5 @@ Read `report.md` from the top and decide:
 Never re-record the baseline to make a report pass.
 
 Linux uses the same evaluation scripts. They select the host’s `linux` or `mac` presets, build directories and galleries automatically. Configure the corresponding desktop preset first, or pass `QT_PREFIX` for a prepared native Qt SDK. Linux records kernel, architecture, hostname, core count and initial load; power state is recorded as unknown. Keep evaluation baselines on the same host and Qt SDK.
+
+Evaluation uses the normal logging durability policy. Older captures that disabled diagnostic-log sync are not directly comparable for storage traffic; record that policy difference when comparing them.

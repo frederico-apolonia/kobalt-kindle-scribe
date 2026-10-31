@@ -14,6 +14,7 @@
 #include "interfaces/reader/ui/panel_timing.h"
 #include "storage/reader_storage.h"
 #include "interfaces/reader/settings/settings_panel.h"
+#include "interfaces/reader/settings/style_illustrations.h"
 #include "assets/bundled_fonts.h"
 #include <QFontDatabase>
 
@@ -73,7 +74,8 @@ bool Reader::chromeTicks() const {
     using kobalt::headerfooter::Field;
     for (const auto field : page->chrome.slotFields)
         if (field == Field::Time || field == Field::Battery || field == Field::BatteryPercent ||
-            field == Field::BatteryWarning || field == Field::ChapterTimeLeft || field == Field::BookTimeLeft)
+            field == Field::BatteryPercentOnly || field == Field::BatteryWarning || field == Field::ChapterTimeLeft ||
+            field == Field::BookTimeLeft)
             return true;
     return false;
 }
@@ -309,7 +311,6 @@ void Reader::openSettings() {
     fitSettings();
     general->show();
     general->raise();
-    renderStylingSamples();
     refresh();
     timing.finish(general);
 }
@@ -333,7 +334,8 @@ void Reader::showAdvancedText(int changed) {
     panel->verticalSpacingScopeButton->setCaption(strings::get(("settings.vertical_spacing_scope_" + settingsVerticalSpacingScope).toUtf8().constData()).toUpper());
     // The scope chooses which gaps page spacing adjusts, so it waits for a mode.
     panel->verticalSpacingScopeButton->setEnabled(settingsVerticalSpacing != "off");
-    renderStylingSamples(changed);
+    cancelStylingSamples();
+    panel->invalidateStylingSamples(changed);
 }
 
 void Reader::cancelStylingSamples() {
@@ -361,7 +363,7 @@ int Reader::stylingChoice(int feature) const {
     return 0;
 }
 
-void Reader::renderStylingSamples(int unchanged) {
+void Reader::renderStylingSamples(int requested) {
     auto *panel = static_cast<SettingsPanel *>(general);
     if (!general->isVisible() || panel->settingsPages->currentIndex() != StylingSettings || page->image.isNull())
         return;
@@ -401,12 +403,13 @@ void Reader::renderStylingSamples(int unchanged) {
         {Feature::VerticalSpacing, "vertical_justification", {QStringLiteral("off"), QStringLiteral("center"), QStringLiteral("expand")}},
         {Feature::VerticalSpacingScope, "vertical_spacing_scope", {QStringLiteral("all"), QStringLiteral("protection")}},
     };
+    registerPickerFonts(QString::fromLatin1(defaultFontFace));
     for (const auto &entry : requests) {
         const int feature = int(entry.feature);
-        if (feature == unchanged)
+        if (feature != requested)
             continue;
         // With page spacing Normal, both scopes draw the same pages and the
-        // row is unavailable, so a render would only search in vain.
+        // row is unavailable.
         if (entry.feature == Feature::VerticalSpacingScope && settingsVerticalSpacing == "off")
             continue;
         const bool spacing = entry.feature == Feature::WordSpacing || entry.feature == Feature::Tracking;
@@ -444,6 +447,10 @@ void Reader::renderStylingSamples(int unchanged) {
             request.crop = crop;
             request.cropOrigin = cropOrigin;
         }
+        if (entry.feature == Feature::Pagination || vertical) {
+            panel->setStylingSample(entry.feature, drawStyleIllustration(request));
+            continue;
+        }
         auto &render = stylingSampleRenders[feature];
         if (render)
             render->store(true);
@@ -474,10 +481,19 @@ void Reader::fitAppearance() {
 }
 
 bool Reader::writePreferences(const QJsonObject &next) {
+    // Known exception: a settings change waits for its write, so each caller
+    // can undo the change when the write fails.
+    mainthread::AllowBlocking allow("settings write");
     auto global = appearance::globalPreferences(next);
     appearance::rememberTextLayout(global, model->state());
     appearance::rememberPageMargins(global, model->state());
-    if (!kobalt::storage::writePreferences(book->paths().preferences(), global)) {
+    // On the writer thread, after any queued layout memory, so neither write
+    // loses the other's change.
+    if (!preferencesWriter)
+        preferencesWriter = std::make_unique<storage::RecordWriter>();
+    if (!preferencesWriter->writeNow([path = book->paths().preferences(), global] {
+            return kobalt::storage::writePreferences(path, global);
+        })) {
         showSettingsWriteError();
         return false;
     }
