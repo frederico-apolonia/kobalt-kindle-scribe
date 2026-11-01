@@ -236,15 +236,18 @@ public:
                 });
             });
         // Test hook: KOBALT_KINDLE_CLICK="<ms>:<object name>[,<ms>:<object name>...]" taps the visible button with that
-        // object name at each time, as a finger would. Names are the ones the widgets carry, such as libraryMore.
+        // object name at each time, as a finger would. Names are the ones the widgets carry, such as libraryMore. A
+        // name that starts with * is clicked even while hidden (the reader's toolbar is hidden until a tap opens it).
         for (const auto &step : qEnvironmentVariable("KOBALT_KINDLE_CLICK").split(',', Qt::SkipEmptyParts)) {
             const auto parts = step.split(':');
             if (parts.size() != 2)
                 continue;
-            QTimer::singleShot(parts[0].toInt(), this, [name = parts[1]] {
+            QTimer::singleShot(parts[0].toInt(), this, [target = parts[1]] {
+                const bool hidden = target.startsWith('*');
+                const QString name = hidden ? target.mid(1) : target;
                 for (auto *widget : QApplication::allWidgets())
-                    if (auto *button = qobject_cast<QAbstractButton *>(widget); button && button->objectName() == name &&
-                                                                                   button->isVisible())
+                    if (auto *button = qobject_cast<QAbstractButton *>(widget);
+                        button && button->objectName() == name && (hidden || button->isVisible()))
                         button->click();
             });
         }

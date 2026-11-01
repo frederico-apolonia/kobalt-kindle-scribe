@@ -148,7 +148,7 @@ Nothing below touches the display or the Amazon UI. Run `kobalt` directly with `
 | `KOBALT_KINDLE_OPEN=<epub>` | Opens a book three seconds after start. |
 | `KOBALT_KINDLE_EXIT_AFTER=<s>` | Exits after that many seconds. |
 | `KOBALT_KINDLE_TYPE=<text>` | Taps the text out on the keyboard, in the library search or, with `KOBALT_KINDLE_OPEN`, the book search. `<shift>`, `<back>`, `<space>`, `<enter>`, `<?123>`, `<abc>`, `<áé>`, `<dismiss>` and `<submit>` name other keys and actions. |
-| `KOBALT_KINDLE_CLICK=<ms>:<name>[,<ms>:<name>...]` | Taps the visible button with that object name at each time (for example `libraryMore`, `libraryMoreSettings`, `librarySettingsBack`, `librarySetting_sleep`). |
+| `KOBALT_KINDLE_CLICK=<ms>:<name>[,<ms>:<name>...]` | Taps the visible button with that object name at each time (a name starting with `*` is clicked even while hidden, such as `*rrSettings` for the reader's toolbar) (for example `libraryMore`, `libraryMoreSettings`, `librarySettingsBack`, `librarySetting_sleep`). |
 | `KOBALT_KINDLE_CLOSE=<ms>` | Closes the open book that long after start, as the back button does. |
 | `KOBALT_KINDLE_SLEEP=<ms>[,<ms>]` | Runs the sleep path that long after start, and the wake path at the second time. |
 | `KOBALT_KINDLE_TLSCHECK=<url>` | Fetches the URL once 1.5 seconds after start, logs the TLS library, the number of trusted CAs, the result and any certificate errors, then exits. |
