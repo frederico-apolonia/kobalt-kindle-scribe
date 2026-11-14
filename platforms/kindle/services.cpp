@@ -290,8 +290,8 @@ ReaderHostServices readerServices(std::shared_ptr<LightDevice> light, const Host
     result.lightAvailable = [light] {
         return light && light->available();
     };
-    result.animationsAvailable = [] {
-        return false;
+    result.animationSupport = [] {
+        return PageAnimationSupport::Unavailable;
     };
     result.cancelAnimation = [] {};
     result.light = [light](QWidget *) {

@@ -283,18 +283,18 @@ private:
     bool closing = false, failed = false, layoutRepairPending = false, asleep = false;
     // The battery state the library's sleep screen shows.
     BatteryStatus sleepBattery;
-    // One preference in the file that every book's settings share. The rest of the file stays as it was.
-    void savePreference(const QString &key, const QJsonValue &value) {
+    // A change to the file that every book's settings share. The rest of the file stays as it was.
+    void editPreferences(const std::function<void(QJsonObject &)> &edit) {
         const auto path = storage::Paths{homeFolder() + "/state/config"}.preferences();
         const auto saved = storage::readPreferences(path);
         if (saved.status != storage::ReadStatus::Ok && saved.status != storage::ReadStatus::Missing) {
-            qWarning() << "Kobalt: the preferences file is unreadable, so" << key << "was not changed";
+            qWarning() << "Kobalt: the preferences file is unreadable, so a setting was not changed";
             return;
         }
         auto next = saved.object;
-        next[key] = value;
+        edit(next);
         if (!storage::writePreferences(path, next))
-            qWarning() << "Kobalt: could not save" << key;
+            qWarning() << "Kobalt: could not save a setting";
     }
     // The library's header shows the clock and battery. Its Settings page shows the front light, and the choices that
     // every book follows and a book's own settings also offer: dark mode and the sleep screen.
@@ -309,47 +309,37 @@ private:
         options.append({"dark", strings::get("reader.dark_mode"), strings::get("settings.dark_description"), {}, {},
                         [this] { return controller.preferences().value("dark_mode").toBool(false) ? 1 : 0; },
                         [this](int on) {
-                            savePreference(QStringLiteral("dark_mode"), on != 0);
+                            editPreferences([on](QJsonObject &preferences) { preferences["dark_mode"] = on != 0; });
                             start->setDark(on != 0);
                         }});
-        QStringList modes, modeDetails;
-        for (const auto mode : sleep::modes) {
-            const bool stock = mode == sleep::Mode::Stock, cover = mode == sleep::Mode::Cover;
-            modes << (stock ? host.stockSleepLabel : strings::get(cover ? "settings.sleep_cover" : "settings.sleep_page"));
-            modeDetails << (stock ? host.stockSleepDescription
-                                  : strings::get(cover ? "settings.sleep_cover_description"
-                                                       : "settings.sleep_page_description"));
+        // The design decides the backdrop and the status as well. Every design but Overlay is offered: that one needs
+        // PNG folders the Kindle host does not provide. The reader's own settings show previews.
+        QVector<sleep::Design> designs;
+        QStringList names, details;
+        for (const auto design : sleep::designs) {
+            if (design == sleep::Design::Overlay)
+                continue;
+            const bool stock = design == sleep::Design::Stock;
+            designs.append(design);
+            names << (stock && !host.stockSleepLabel.isEmpty()
+                          ? host.stockSleepLabel
+                          : strings::get(QStringLiteral("sleep.design_%1").arg(sleep::value(design)).toLatin1().constData()));
+            details << (stock ? host.stockSleepDescription : QString());
         }
-        options.append({"sleep", strings::get("settings.sleep_screen"), tr("What the screen shows while the device sleeps."),
-                        modes, modeDetails,
-                        [this] {
-                            const auto current = sleep::mode(controller.preferences());
-                            for (int i = 0; i < int(std::size(sleep::modes)); ++i)
-                                if (sleep::modes[i] == current)
-                                    return i;
-                            return 0;
+        options.append({"sleep", strings::get("settings.sleep_screen"),
+                        tr("What the screen shows while the device sleeps. A book's settings preview the designs."),
+                        names, details,
+                        [this, designs] {
+                            const int index = designs.indexOf(sleep::design(controller.preferences()));
+                            return index < 0 ? 0 : index;
                         },
-                        [this](int index) {
-                            if (index >= 0 && index < int(std::size(sleep::modes)))
-                                savePreference(QString::fromLatin1(sleep::preferenceKey), sleep::value(sleep::modes[index]));
-                        }});
-        const QStringList tiles{strings::get("settings.sleep_tile_card"), strings::get("settings.sleep_tile_band"),
-                                strings::get("settings.sleep_tile_bookmark")};
-        const QStringList tileDetails{strings::get("settings.sleep_tile_card_description"),
-                                      strings::get("settings.sleep_tile_band_description"),
-                                      strings::get("settings.sleep_tile_bookmark_description")};
-        options.append({"tile", strings::get("settings.sleep_tile"), tr("How the reading status looks on the sleep screen."),
-                        tiles, tileDetails,
-                        [this] {
-                            const auto current = sleep::tile(controller.preferences());
-                            for (int i = 0; i < int(std::size(sleep::tiles)); ++i)
-                                if (sleep::tiles[i] == current)
-                                    return i;
-                            return 0;
-                        },
-                        [this](int index) {
-                            if (index >= 0 && index < int(std::size(sleep::tiles)))
-                                savePreference(QString::fromLatin1(sleep::tileKey), sleep::value(sleep::tiles[index]));
+                        [this, designs](int index) {
+                            if (index < 0 || index >= designs.size())
+                                return;
+                            editPreferences([design = designs[index]](QJsonObject &preferences) {
+                                sleep::setDesign(preferences, design);
+                                preferences.remove("kobalt_sleep_screen");
+                            });
                         }});
         // The hook runs for every library view the start screen builds, so a rebuild at a new text size keeps these.
         start->setLibraryHook([status, options, light = host.light](library::LibraryView &view) {
@@ -379,7 +369,7 @@ private:
             return;
         sleepBattery = battery;
         const auto preferences = controller.preferences();
-        sleepScreen->refresh(sleepScreen->libraryPicture(size(), battery, sleep::mode(preferences), sleep::tile(preferences)),
+        sleepScreen->refresh(sleepScreen->libraryPicture(size(), battery, preferences),
                              rect());
     }
     // The reader saves its place and builds its sleep image (cover or dimmed page, with progress and battery), then
@@ -395,7 +385,7 @@ private:
             const auto mode = sleep::mode(preferences);
             const auto battery = kindle::batteryStatus();
             if (mode != sleep::Mode::Stock && start->isVisible() && !closing &&
-                sleepScreen->present(sleepScreen->libraryPicture(size(), battery, mode, sleep::tile(preferences)))) {
+                sleepScreen->present(sleepScreen->libraryPicture(size(), battery, preferences))) {
                 sleepBattery = battery;
                 asleep = true;
             }
@@ -569,17 +559,6 @@ int main(int argc, char **argv) {
     QApplication::setFont(ui::interfaceFont());
     initializeDiagnostics(homeFolder() + "/state/diagnostics");
     auto light = std::make_shared<kindle::LightDevice>();
-    // The Amazon screen saver is not available, so a new profile starts with Kobalt's own sleep screen (the book
-    // cover). An explicit choice, including the first one, is kept.
-    {
-        const storage::Paths paths{homeFolder() + "/state/config"};
-        auto saved = storage::readPreferences(paths.preferences());
-        if ((saved.status == storage::ReadStatus::Missing || saved.status == storage::ReadStatus::Ok) &&
-            !saved.object.contains(sleep::preferenceKey) && !saved.object.contains("kobalt_sleep_screen")) {
-            saved.object[sleep::preferenceKey] = sleep::value(sleep::Mode::Cover);
-            storage::writePreferences(paths.preferences(), saved.object);
-        }
-    }
     Window window(engineFontInputs(assets, {}, homeFolder() + "/fonts"), placeholderFontFamily(assets, copies), light);
     window.showFullScreen();
     // Test hook: leave cleanly after a number of seconds so a dry run can dump its last frame.

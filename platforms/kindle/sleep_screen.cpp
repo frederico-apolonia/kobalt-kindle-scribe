@@ -60,17 +60,22 @@ void SleepScreen::remember(const sleep::Snapshot &snapshot)
         storage::writeSleepSnapshot(snapshotPath, snapshot, QString::fromLatin1(kToken));
 }
 
-QImage SleepScreen::libraryPicture(QSize size, const BatteryStatus &battery, sleep::Mode mode, sleep::Tile tile) const
+QImage SleepScreen::libraryPicture(QSize size, const BatteryStatus &battery, const QJsonObject &preferences) const
 {
+    const auto mode = sleep::mode(preferences);
+    const auto tile = sleep::tile(preferences);
     const auto status = battery.fullyCharged ? reader::SleepStatus::Charged
                         : battery.charging   ? reader::SleepStatus::Charging
                                              : reader::SleepStatus::Sleeping;
     sleep::Snapshot book = last;
     if (book.image.isNull() || book.mode != mode)
         book = storage::readSleepSnapshot(snapshotPath, QString::fromLatin1(kToken), mode);
-    if (!book.image.isNull())
-        return reader::sleepScreenImage(std::move(book.image), book.progress, book.remaining, book.dark,
-                                        battery.percent, status, book.dimPage, tile, book.percent);
+    if (!book.image.isNull()) {
+        book.tile = tile;
+        book.design = sleep::design(preferences);
+        reader::portraitSleepSnapshot(book);
+        return reader::sleepDesignImage(std::move(book.image), book, battery.percent, status);
+    }
     QImage picture(size, QImage::Format_RGB32);
     if (picture.isNull())
         return {};
