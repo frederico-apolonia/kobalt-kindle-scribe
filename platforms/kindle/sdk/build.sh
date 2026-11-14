@@ -1,7 +1,7 @@
 #!/bin/sh
 # Cross-builds platforms/kindle in the arm64 builder image (inputs: Qt, qtsensors, OpenSSL, FBInk and the sysroot, as in the other scripts here). Output: build/kindle/package.
 #
-#   KINDLE_SYSROOT   the koxtoolchain kindlehf sysroot with zlib and libpng added by sdk/build-sysroot-libs.sh
+#   KINDLE_SYSROOT   the sysroot copy with zlib and libpng that sdk/build-sysroot-libs.sh made (KINDLE_SYSROOT_LIBS there)
 #   KINDLE_QT        Qt 6.11.3 build directory made by sdk/build-qt.sh (holds host/ and install/)
 #   KINDLE_QTSENSORS install prefix of qtsensors 6.11.3 built for the Kindle
 #   KINDLE_FBINK     FBInk tree with Release/libfbink.a built for the Kindle

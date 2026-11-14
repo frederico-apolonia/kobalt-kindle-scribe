@@ -46,6 +46,7 @@ Inputs (paths are yours to choose):
 | `KINDLE_QT` | An empty directory that `sdk/build-qt.sh` fills with `host/` and `install/`. Qt 6.11.3 (the `qtbase` checkout used is `5a1194b2d368e2d72c230205c464b04a2f23eccd`). |
 | `KINDLE_QTSENSORS` | Install prefix of `qtsensors` 6.11.3, built against that Qt with the same toolchain file and `QT_HOST_PATH=$KINDLE_QT/host`. The reader's orientation code includes `QOrientationSensor`. |
 | `KINDLE_OPENSSL` | OpenSSL 3.5 (an LTS release; 3.5.9 was used) cross-built for the Kindle by `sdk/build-openssl.sh`, installed into this empty directory. Qt links it for TLS. |
+| `KINDLE_SYSROOT_LIBS` | An empty directory that step 6 fills with a copy of `KINDLE_SYSROOT` plus zlib and libpng as static libraries. The Kobalt build uses this one as its sysroot. |
 | `KINDLE_FBINK` | A FBInk tree with `Release/libfbink.a` built for the Kindle (revision `13872c0` was used). |
 
 1. Build the builder image: `docker build --platform linux/arm64 -f platforms/kindle/sdk/builder.Dockerfile -t kobalt-kindle-builder platforms/kindle/sdk`. The next steps run in it.
@@ -79,13 +80,21 @@ Inputs (paths are yours to choose):
    ```
 
    FBInk is GPLv3. It is linked into `libqkindlefb.so` and `fbguard` only, and is not vendored in this repository. A binary distribution of those two files is therefore subject to the GPL.
-6. Build Kobalt, from the repository root:
+6. Add zlib and libpng to a copy of the sysroot. The Kindle toolchain ships neither (Qt keeps its own copies private), while the Kobo SDK ships both, and the shared dependency build expects to find them with `find_package(PNG)` and `-lz`. The versions are the ones `dependencies/manifest.json` pins (zlib 1.3.1, libpng 1.6.59). The toolchain's own sysroot stays untouched:
 
    ```sh
-   KINDLE_SYSROOT=... KINDLE_QT=... KINDLE_QTSENSORS=... KINDLE_FBINK=... platforms/kindle/sdk/build.sh
+   KINDLE_SYSROOT=... KINDLE_SYSROOT_LIBS=... KINDLE_ZLIB_SRC=.../zlib-1.3.1 KINDLE_PNG_SRC=.../libpng-1.6.59 \
+     platforms/kindle/sdk/build-sysroot-libs.sh
+   ```
+7. Build Kobalt, from the repository root, with the sysroot copy as `KINDLE_SYSROOT`:
+
+   ```sh
+   KINDLE_SYSROOT=$KINDLE_SYSROOT_LIBS KINDLE_QT=... KINDLE_QTSENSORS=... KINDLE_FBINK=... platforms/kindle/sdk/build.sh
    ```
 
-   The first run downloads and verifies the third-party sources listed in `dependencies/manifest.json`, including zlib, which the Kindle target builds itself. The result is `build/kindle/package/`: `kobalt`, `assets/`, `plugins/platforms/libqkindlefb.so`, `fbguard`, `kobalt.sh` and `library-entry.sh`.
+   The shared dependency set (CREngine, FreeType and the rest) is built once into `build/dependency-cache/`, keyed by the compiler and SDK, so later builds reuse it; the first run downloads and verifies the sources listed in `dependencies/manifest.json`. The result is `build/kindle/package/`: `kobalt`, `assets/`, `plugins/platforms/libqkindlefb.so`, `fbguard`, `kobalt.sh` and `library-entry.sh`.
+
+   On Docker Desktop for Mac, a long build that writes its build tree and the dependency cache to host folders has stalled in the file-sharing layer (the container blocks in the kernel and cannot even be killed until Docker is restarted). Keeping `/out` and `/dependency-cache` on Docker volumes, and copying only `package/` to the host afterwards, avoided it.
 
    The `kindle` CMake preset in `platforms/kindle/CMakePresets.json` does the same inside an environment that already has the toolchain (`QT_KINDLE_PATH`, `QT_HOST_PATH`, `QT_KINDLE_SENSORS_PATH`, `FBINK_SOURCE`).
 
