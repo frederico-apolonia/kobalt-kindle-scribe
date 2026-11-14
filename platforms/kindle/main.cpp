@@ -1,6 +1,6 @@
-#include "../android/canvas.h"
-#include "../android/reader.h"
-#include "../android/start_screen.h"
+#include "../standalone/canvas.h"
+#include "../standalone/reader.h"
+#include "../standalone/start_screen.h"
 #include "keyboard.h"
 #include "lifecycle.h"
 #include "light_device.h"
@@ -8,8 +8,8 @@
 #include "sleep_screen.h"
 #include "assets/assets.h"
 #include "assets/bundled_fonts.h"
-#include "interfaces/library/library_view.h"
-#include "interfaces/reader/ui/style/fonts.h"
+#include "app/library/library_view.h"
+#include "ui/style/fonts.h"
 #include "library/library_store.h"
 #include "library/scanner.h"
 #include "reading/reading_density.h"
@@ -97,12 +97,12 @@ public:
         setAutoFillBackground(true);
         layout = new QStackedLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
-        start = new android::StartScreen(kindle::readerServices(light, {}).presentation, store);
+        start = new standalone::StartScreen(kindle::readerServices(light, {}).presentation, store);
         start->setDark(controller.preferences().value("dark_mode").toBool(false));
         // No document pickers on the Kindle, and no back key: the library's More sheet offers Exit.
         start->setHostActions(false, true);
         installLibrarySettings(light);
-        canvas = new android::WidgetCanvas(this);
+        canvas = new standalone::WidgetCanvas(this);
         layout->addWidget(start);
         layout->addWidget(canvas);
         canvas->viewportResized = [this] { canvas->fitContent(); };
@@ -118,20 +118,20 @@ public:
         // Tells the display plugin that this process paints the sleep picture: it waits for it before pausing.
         qApp->setProperty("kindlefb_sleep_screen", true);
         qApp->installEventFilter(this);
-        connect(start, &android::StartScreen::bookRequested, this, &Window::openBook);
-        connect(start, &android::StartScreen::exitRequested, this, &QWidget::close);
-        connect(start, &android::StartScreen::markUnreadRequested, this, [this](const QString &key) {
+        connect(start, &standalone::StartScreen::bookRequested, this, &Window::openBook);
+        connect(start, &standalone::StartScreen::exitRequested, this, &QWidget::close);
+        connect(start, &standalone::StartScreen::markUnreadRequested, this, [this](const QString &key) {
             if (controller.resetBook(key))
                 store.setMark(key, library::Book::Mark::Unread);
             else
                 start->showLibraryError(tr("The book's reading settings and position could not be reset."));
         });
         // Books stay where they are: removing one only forgets it, and folders are fixed to the documents folder.
-        connect(start, &android::StartScreen::removeBookRequested, this, [this](const QString &key) {
+        connect(start, &standalone::StartScreen::removeBookRequested, this, [this](const QString &key) {
             store.removeBook(key);
         });
-        connect(&controller, &android::ReaderController::openingProgress, start, &android::StartScreen::setProgress);
-        connect(&controller, &android::ReaderController::opened, this, [this] {
+        connect(&controller, &standalone::ReaderController::openingProgress, start, &standalone::StartScreen::setProgress);
+        connect(&controller, &standalone::ReaderController::opened, this, [this] {
             auto *reader = controller.window();
             canvas->setContent(reader, true, 1.0);
             setPalette(reader->palette());
@@ -142,14 +142,14 @@ public:
             reader->checkpoint();
             qInfo() << "Kobalt frame ready";
         });
-        connect(&controller, &android::ReaderController::failed, this, [this](const QString &error) {
+        connect(&controller, &standalone::ReaderController::failed, this, [this](const QString &error) {
             failed = true;
             setPalette(start->palette());
             start->showLibraryError(error);
             layout->setCurrentWidget(start);
             qWarning() << "Kobalt reader error:" << error;
         });
-        connect(&controller, &android::ReaderController::closed, this, [this] {
+        connect(&controller, &standalone::ReaderController::closed, this, [this] {
             recordProgress();
             setPalette(start->palette());
             start->setDark(controller.preferences().value("dark_mode").toBool(false));
@@ -273,12 +273,12 @@ private:
     // Declared first: the reader's services are built from it, and a reader may be opened at any time.
     kindle::OnScreenKeyboard *keyboard = nullptr;
     kindle::SleepScreen *sleepScreen = nullptr;
-    android::ReaderController controller;
+    standalone::ReaderController controller;
     library::Store store;
     kindle::Lifecycle lifecycle;
     QStackedLayout *layout;
-    android::StartScreen *start;
-    android::WidgetCanvas *canvas;
+    standalone::StartScreen *start;
+    standalone::WidgetCanvas *canvas;
     QString openedKey;
     bool closing = false, failed = false, layoutRepairPending = false, asleep = false;
     // The battery state the library's sleep screen shows.
@@ -300,11 +300,10 @@ private:
     // every book follows and a book's own settings also offer: dark mode and the sleep screen.
     void installLibrarySettings(const std::shared_ptr<kindle::LightDevice> &light) {
         const auto host = kindle::readerServices(light, {});
-        auto *view = start->library();
-        view->setStatus([clock = host.clock, battery = host.battery] {
+        const library::LibraryView::HeaderStatusSource status = [clock = host.clock, battery = host.battery] {
             const auto level = battery();
             return library::LibraryView::HeaderStatus{clock(), level.percent, level.charging};
-        });
+        };
         using Option = library::LibraryView::HostOption;
         QVector<Option> options;
         options.append({"dark", strings::get("reader.dark_mode"), strings::get("settings.dark_description"), {}, {},
@@ -352,7 +351,11 @@ private:
                             if (index >= 0 && index < int(std::size(sleep::tiles)))
                                 savePreference(QString::fromLatin1(sleep::tileKey), sleep::value(sleep::tiles[index]));
                         }});
-        view->setHostSettings(std::move(options), host.light);
+        // The hook runs for every library view the start screen builds, so a rebuild at a new text size keeps these.
+        start->setLibraryHook([status, options, light = host.light](library::LibraryView &view) {
+            view.setStatus(status);
+            view.setHostSettings(options, light);
+        });
     }
     QSize pixels() const {
         if (canvas->isVisible())

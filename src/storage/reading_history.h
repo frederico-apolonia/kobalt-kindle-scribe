@@ -11,7 +11,8 @@ class QSqlDatabase;
 namespace kobalt {
 // Durable intervals use the reader's cumulative active clock for duration and
 // UTC only for chronology. A clock adjustment must not change reading time.
-class ReadingHistory {
+class ReadingHistory
+{
 public:
     using UtcClock = std::function<qint64()>;
     ReadingHistory(QString directory, QString identity, QByteArray fingerprint, QString sourceKey,
@@ -27,10 +28,13 @@ public:
     // Periodic checkpoints queue an immutable snapshot. Lifecycle boundaries
     // wait for the latest snapshot; replacing a queued one preserves intervals.
     bool save(bool background = false);
-    struct Snapshot {
+
+    struct Snapshot
+    {
         std::function<bool(QSqlDatabase &)> write;
         std::function<void(bool)> complete;
     };
+
     // Capture on the owner thread. Complete only after the enclosing transaction.
     Snapshot snapshot();
     bool saving() const;
@@ -41,15 +45,21 @@ public:
     // process share it; another process cannot recover or start a reader here.
     // Failed acquisition returns a diagnostic code through error.
     static std::shared_ptr<Profile> openProfile(const QString &directory, QString *error = nullptr);
-
+    // Active reading time of the sessions that started at or after `utcStart`
+    // and are no longer running. Waits for the profile writer: call it off the
+    // GUI thread. Returns -1 when the profile cannot be read.
+    static qint64 finishedSince(const QString &directory, qint64 utcStart);
 
 private:
     static bool recover(const QString &directory);
     void acknowledge();
-    struct Interval {
+
+    struct Interval
+    {
         QString id, startPosition, endPosition, status;
         qint64 started = 0, observed = 0, milliseconds = 0;
     };
+
     QString directory, identity, book, sourceKey, title, author;
     QByteArray fingerprint;
     UtcClock utc;
@@ -63,4 +73,4 @@ private:
     // Destroy first: writes own snapshots and results until this has drained.
     std::unique_ptr<storage::RecordWriter> writer;
 };
-}
+} // namespace kobalt

@@ -8,13 +8,14 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES 
     message(FATAL_ERROR "Use the prepared Kindle SDK and the kindle preset (32-bit ARM Linux)")
 endif()
 get_filename_component(KOBALT_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
-foreach(retired KOBALT_DEPENDENCIES KOBALT_DEPENDENCY_CACHE KOBALT_ASSETS)
+foreach(retired KOBALT_DEPENDENCIES KOBALT_ASSETS)
     unset(${retired} CACHE)
 endforeach()
 set(source "${KOBALT_ROOT}/src")
-# Selects the libpng source build in dependencies/: the Kindle SDK has no libpng to share with Qt.
-set(KOBALT_KINDLE ON)
-add_subdirectory("${KOBALT_ROOT}/dependencies" "${CMAKE_CURRENT_BINARY_DIR}/dependencies")
+# The dependency set is built once into a cache shared by every build with the same compiler and SDK. libpng and
+# zlib come from the sysroot, as on Kobo: see sdk/build-sysroot-libs.sh.
+include("${KOBALT_ROOT}/dependencies/cache.cmake")
+kobalt_dependencies()
 add_subdirectory("${KOBALT_ROOT}/assets" "${CMAKE_CURRENT_BINARY_DIR}/assets")
 
 file(READ "${KOBALT_ASSETS}/manifest.json" assets)
@@ -35,44 +36,26 @@ foreach(index RANGE ${last})
     list(APPEND bundled "${relative}")
 endforeach()
 
-file(READ "${CRENGINE_SOURCE}/cr3gui/data/html5.css" READER_HTML_CSS)
-configure_file("${source}/engine/crengine/reader_styles.h.in" reader_styles.h @ONLY)
-file(GLOB patterns RELATIVE "${CRENGINE_SOURCE}/cr3gui/data/hyph" "${CRENGINE_SOURCE}/cr3gui/data/hyph/*.pattern")
-list(SORT patterns)
-list(TRANSFORM patterns PREPEND "\"")
-list(TRANSFORM patterns APPEND "\"")
-list(JOIN patterns ", " READER_HYPHENATION_PATTERNS)
-configure_file("${source}/engine/crengine/reader_hyphenation.h.in" reader_hyphenation.h @ONLY)
+# The generated engine headers, the cache policy, the annotation storage
+# default, kobalt_shared_definitions and kobalt_notice_resources.
+include("${KOBALT_ROOT}/platforms/shared-inputs.cmake")
 set(KOBALT_COMMIT "" CACHE STRING "Source commit, passed by the container launcher")
 option(KOBALT_COMMIT_MODIFIED "Source has uncommitted changes" OFF)
 configure_file("${source}/support/build_info.h.in" build_info.h @ONLY)
 
-# Shared reader code. The Nickel loopback and the system font catalogue have no Kindle counterpart: the loopback
-# entry point is stubbed in display.cpp and the Amazon fonts are obfuscated, so only bundled fonts are used.
+# Shared reader code. The Amazon system fonts are obfuscated, so only bundled fonts are used.
 file(GLOB_RECURSE shared CONFIGURE_DEPENDS "${source}/*.cpp" "${source}/*.h")
-list(REMOVE_ITEM shared "${source}/publication/loopback.cpp" "${source}/assets/system_fonts.cpp")
 # The scenario player (performance evaluation runs) needs Qt's private GUI headers and is not part of a device build.
 list(FILTER shared EXCLUDE REGEX "/src/scenario/")
-file(GLOB adapters CONFIGURE_DEPENDS "*.cpp" "*.h")
-# The reader controller and start screen are portable; the desktop target compiles them from the same place.
-list(APPEND adapters "${KOBALT_ROOT}/platforms/android/reader.cpp" "${KOBALT_ROOT}/platforms/android/start_screen.cpp")
+list(REMOVE_ITEM shared "${source}/assets/system_fonts.cpp")
+# The reader controller, start screen and canvas are the standalone hosts' shared code, as for Android and desktop.
+file(GLOB adapters CONFIGURE_DEPENDS "*.cpp" "*.h" "../standalone/*.cpp" "../standalone/*.h")
 qt_add_executable(kobalt_kindle ${shared} ${adapters})
-option(KOBALT_SQLITE_ANNOTATIONS_DEFAULT "Use SQLite annotation storage by default" ON)
-if(KOBALT_SQLITE_ANNOTATIONS_DEFAULT)
-    set_source_files_properties("${source}/storage/annotation_database.cpp" PROPERTIES
-        COMPILE_DEFINITIONS KOBALT_SQLITE_ANNOTATIONS_DEFAULT=1)
-else()
-    set_source_files_properties("${source}/storage/annotation_database.cpp" PROPERTIES
-        COMPILE_DEFINITIONS KOBALT_SQLITE_ANNOTATIONS_DEFAULT=0)
-endif()
-target_include_directories(kobalt_kindle PRIVATE "${CMAKE_CURRENT_BINARY_DIR}" "${source}/interfaces/reader/ui/controls"
-    "${KOBALT_ROOT}/platforms/android")
+target_include_directories(kobalt_kindle PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_include_directories(kobalt_kindle SYSTEM PRIVATE "${CRENGINE_SOURCE}/crengine/include" "${CRENGINE_BUILD}"
     "${prefix}/include" "${prefix}/include/harfbuzz" "${prefix}/include/freetype2" "${prefix}/include/fribidi")
 target_compile_options(kobalt_kindle PRIVATE -Wall -Wextra "-iquote${KOBALT_ROOT}" "-iquote${source}")
-target_compile_definitions(kobalt_kindle PRIVATE KOBALT_READER_HARDWARE KOBALT_VERSION="${KOBALT_VERSION}")
-include("${KOBALT_ROOT}/platforms/cache-policy.cmake")
-target_compile_definitions(kobalt_kindle PRIVATE KOBALT_LAYOUT_POLICY="${layout_policy}")
+target_compile_definitions(kobalt_kindle PRIVATE ${kobalt_shared_definitions})
 # Qt bundles its own FreeType. The engine's glyph calls are redirected to the wrappers in font_weight.cpp so the two
 # copies stay apart, as on Android.
 set(engine "${CMAKE_CURRENT_BINARY_DIR}/libcrengine-reader.a")
@@ -81,17 +64,14 @@ add_custom_command(OUTPUT "${engine}"
         --redefine-sym FT_Render_Glyph=kobalt_font_render_glyph "${CRENGINE_BUILD}/libcrengine.a" "${engine}"
     DEPENDS "${CRENGINE_BUILD}/libcrengine.a" VERBATIM)
 add_custom_target(reader-engine DEPENDS "${engine}")
-add_dependencies(reader-engine kobalt-dependencies)
 add_dependencies(kobalt_kindle reader-engine)
 target_link_libraries(kobalt_kindle PRIVATE Qt6::Widgets Qt6::Network Qt6::Sensors Qt6::Sql "${engine}"
     "${prefix}/lib/libharfbuzz.a" "${prefix}/lib/libxxhash.a" "${prefix}/lib/libutf8proc.a"
     "${prefix}/lib/libjpeg.a" "${prefix}/lib/liblunasvg.a" "${prefix}/lib/libfreetype.a"
-    "${prefix}/lib/libfribidi.a" "${prefix}/lib/libunibreak.a" "${prefix}/lib/libpng16.a" "${prefix}/lib/libz.a")
+    "${prefix}/lib/libfribidi.a" "${prefix}/lib/libunibreak.a" "${KOBALT_TEST_PNG}" z)
 target_link_options(kobalt_kindle PRIVATE -Wl,--exclude-libs,ALL)
 set_target_properties(kobalt_kindle PROPERTIES BUILD_WITH_INSTALL_RPATH ON INSTALL_RPATH "$ORIGIN/lib")
-set(resources "${KOBALT_ROOT}/assets")
-file(GLOB notices CONFIGURE_DEPENDS "${resources}/notices/*")
-qt_add_resources(kobalt_kindle notices PREFIX "/kobalt" BASE "${resources}" FILES "${resources}/acknowledgments.json" ${notices})
+qt_add_resources(kobalt_kindle notices PREFIX "/kobalt" BASE "${kobalt_notice_base}" FILES ${kobalt_notice_resources})
 
 # Runtime layout next to the executable: kobalt, assets/ (verified above) and the plugin come from this build; lib/
 # (Qt and the C++ runtime) and plugins/sqldrivers come from the Qt SDK.

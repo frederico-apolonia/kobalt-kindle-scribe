@@ -1,17 +1,21 @@
 #include "stardict.h"
 #include "support/main_thread.h"
 #include <QFile>
+#include <QDateTime>
 #include <QDir>
+#include <QDirIterator>
 #include <QtEndian>
 #include <QMap>
 #include <QStringList>
 #include <QSaveFile>
 #include <zlib.h>
 #include <cstring>
+#include <algorithm>
 
 namespace kobalt {
 namespace {
-QString sourceSummary(const QString &attribution) {
+QString sourceSummary(const QString &attribution)
+{
     QStringList sources;
     bool inSources = false;
     for (auto line : attribution.split('\n')) {
@@ -38,48 +42,70 @@ QString sourceSummary(const QString &attribution) {
     }
     return sources.join(QString::fromUtf8(" · "));
 }
-quint32 be32(const char *p) {
+
+quint32 be32(const char *p)
+{
     return qFromBigEndian<quint32>(reinterpret_cast<const uchar *>(p));
 }
-quint16 le16(const char *p) {
+
+quint16 le16(const char *p)
+{
     return qFromLittleEndian<quint16>(reinterpret_cast<const uchar *>(p));
 }
-quint32 le32(const char *p) {
+
+quint32 le32(const char *p)
+{
     return qFromLittleEndian<quint32>(reinterpret_cast<const uchar *>(p));
 }
-QByteArray fold(QByteArray text) {
+
+QByteArray fold(QByteArray text)
+{
     for (auto &c : text)
         if (c >= 'A' && c <= 'Z')
             c += 'a' - 'A';
     return text;
 }
-int compare(const QByteArray &a, const QByteArray &b) {
+
+int compare(const QByteArray &a, const QByteArray &b)
+{
     const int primary = std::strcmp(fold(a).constData(), fold(b).constData());
     return primary ? primary : std::strcmp(a.constData(), b.constData());
 }
-bool fail(QString *error, const QString &message) {
+
+bool fail(QString *error, const QString &message)
+{
     if (error)
         *error = message;
     return false;
 }
-struct Mapped {
+
+struct Mapped
+{
     QFile file;
     uchar *bytes = nullptr;
-    explicit Mapped(const QString &path) : file(path) {
+
+    explicit Mapped(const QString &path) : file(path)
+    {
         if (file.open(QIODevice::ReadOnly) && file.size() > 0)
             bytes = file.map(0, file.size());
     }
-    ~Mapped() {
+
+    ~Mapped()
+    {
         if (bytes)
             file.unmap(bytes);
     }
 };
-struct Body {
+
+struct Body
+{
     QFile file;
     QVector<quint32> chunks;
     int chunkBytes = 0;
     quint32 length = 0;
-    bool open(const QString &path) {
+
+    bool open(const QString &path)
+    {
         file.setFileName(path);
         if (!file.open(QIODevice::ReadOnly))
             return false;
@@ -90,8 +116,8 @@ struct Body {
             return true;
         }
         const auto header = file.read(12);
-        if (header.size() != 12 || uchar(header[0]) != 31 || uchar(header[1]) != 139 || header[2] != 8 ||
-            (uchar(header[3]) & ~quint8(4 | 8 | 16)) || !(header[3] & 4))
+        if (header.size() != 12 || uchar(header[0]) != 31 || uchar(header[1]) != 139
+            || header[2] != 8 || (uchar(header[3]) & ~quint8(4 | 8 | 16)) || !(header[3] & 4))
             return false;
         const auto extra = file.read(le16(header.constData() + 10));
         if (extra.size() != le16(header.constData() + 10))
@@ -113,7 +139,7 @@ struct Body {
             }
             at += 4 + size;
         }
-        for (int flag : {8, 16})
+        for (int flag : { 8, 16 })
             if (header[3] & flag) {
                 bool ended = false;
                 for (int i = 0; i < 4096; ++i) {
@@ -144,9 +170,12 @@ struct Body {
         if (footer.size() != 4)
             return false;
         length = le32(footer.constData());
-        return length > quint64(sizes.size() - 1) * chunkBytes && length <= quint64(sizes.size()) * chunkBytes;
+        return length > quint64(sizes.size() - 1) * chunkBytes
+                && length <= quint64(sizes.size()) * chunkBytes;
     }
-    QByteArray read(quint32 offset, quint32 size) {
+
+    QByteArray read(quint32 offset, quint32 size)
+    {
         if (!size || size > 4 * 1024 * 1024 || quint64(offset) + size > length)
             return {};
         if (chunks.isEmpty()) {
@@ -173,17 +202,21 @@ struct Body {
             const auto left = stream.avail_in;
             inflateEnd(&stream);
             const quint32 expected = qMin<quint32>(chunkBytes, length - index * chunkBytes);
-            if ((status != Z_OK && status != Z_BUF_ERROR && status != Z_STREAM_END) || left || count != expected)
+            if ((status != Z_OK && status != Z_BUF_ERROR && status != Z_STREAM_END) || left
+                || count != expected)
                 return {};
             const quint32 start = qMax(offset, index * chunkBytes) - index * chunkBytes;
-            const quint32 take = qMin(end, index * chunkBytes + expected) - index * chunkBytes - start;
+            const quint32 take =
+                    qMin(end, index * chunkBytes + expected) - index * chunkBytes - start;
             result.append(output.constData() + start, take);
         }
         return result;
     }
 };
+
 bool index(const QString &path, int suffix, quint32 bodyLength, quint32 wordCount, QString *error,
-           const std::function<bool()> &cancelled, quint32 expectedCount) {
+           const std::function<bool()> &cancelled, quint32 expectedCount)
+{
     QFile file(path);
     mainthread::BlockingOperation blockingOperation("dictionary-index-write");
     QSaveFile positions(path + ".kobalt");
@@ -210,11 +243,12 @@ bool index(const QString &path, int suffix, quint32 bodyLength, quint32 wordCoun
             word.append(c);
         }
         const auto value = file.read(suffix);
-        if (!ended || word.isEmpty() || QString::fromUtf8(word).toUtf8() != word || value.size() != suffix ||
-            (!previous.isEmpty() && compare(previous, word) > 0))
+        if (!ended || word.isEmpty() || QString::fromUtf8(word).toUtf8() != word
+            || value.size() != suffix || (!previous.isEmpty() && compare(previous, word) > 0))
             return fail(error, "Invalid StarDict index.");
-        if (suffix == 8 ? quint64(be32(value.constData())) + be32(value.constData() + 4) > bodyLength
-                        : be32(value.constData()) >= wordCount)
+        if (suffix == 8
+                    ? quint64(be32(value.constData())) + be32(value.constData() + 4) > bodyLength
+                    : be32(value.constData()) >= wordCount)
             return fail(error, "Dictionary index points outside its data.");
         char bytes[4];
         qToBigEndian<quint32>(position, reinterpret_cast<uchar *>(bytes));
@@ -229,10 +263,12 @@ bool index(const QString &path, int suffix, quint32 bodyLength, quint32 wordCoun
         return fail(error, "Cannot save dictionary index.");
     return true;
 }
-qint64 find(Mapped &offsets, QFile &indexFile, const QByteArray &word) {
+
+qint64 find(Mapped &offsets, QFile &indexFile, const QByteArray &word)
+{
     const auto wanted = fold(word);
     // Prefer the spelling in the book before folding case, so “set” does not resolve to “SET”.
-    for (bool exact : {true, false}) {
+    for (bool exact : { true, false }) {
         qint64 low = 0, high = offsets.file.size() / 4;
         while (low < high) {
             const auto middle = low + (high - low) / 2;
@@ -243,8 +279,8 @@ qint64 find(Mapped &offsets, QFile &indexFile, const QByteArray &word) {
             if (zero <= 0)
                 return -1;
             const auto candidate = line.left(zero);
-            const int order =
-                exact ? compare(candidate, word) : std::strcmp(fold(candidate).constData(), wanted.constData());
+            const int order = exact ? compare(candidate, word)
+                                    : std::strcmp(fold(candidate).constData(), wanted.constData());
             if (order < 0)
                 low = middle + 1;
             else
@@ -261,17 +297,22 @@ qint64 find(Mapped &offsets, QFile &indexFile, const QByteArray &word) {
     }
     return -1;
 }
-}
-struct StarDict::Data {
+} // namespace
+
+struct StarDict::Data
+{
     QString id, name, source;
     Body body;
     QFile idx, syn;
     std::unique_ptr<Mapped> words, synonyms;
 };
+
 StarDict::StarDict() = default;
 StarDict::~StarDict() = default;
+
 bool StarDict::prepare(const QString &directory, const QString &id, QString *error,
-                       const std::function<bool()> &cancelled) {
+                       const std::function<bool()> &cancelled)
+{
     const auto prefix = QDir(directory).filePath(id);
     QFile ifo(prefix + ".ifo");
     if (!ifo.open(QIODevice::ReadOnly) || ifo.size() > 65536)
@@ -300,11 +341,14 @@ bool StarDict::prepare(const QString &directory, const QString &id, QString *err
     const quint32 synonyms = values.value("synwordcount", "0").toUInt(&valid);
     if (!valid || (synonyms && !QFile::exists(prefix + ".syn")))
         return fail(error, "Missing StarDict inflection index.");
-    if (QFile::exists(prefix + ".syn") && !index(prefix + ".syn", 4, body.length, words, error, cancelled, synonyms))
+    if (QFile::exists(prefix + ".syn")
+        && !index(prefix + ".syn", 4, body.length, words, error, cancelled, synonyms))
         return false;
     return true;
 }
-bool StarDict::open(const QString &directory, const QString &id, QString *error) {
+
+bool StarDict::open(const QString &directory, const QString &id, QString *error)
+{
     data.reset();
     auto next = std::make_unique<Data>();
     next->id = id;
@@ -313,12 +357,13 @@ bool StarDict::open(const QString &directory, const QString &id, QString *error)
     next->idx.setFileName(prefix + ".idx");
     next->syn.setFileName(prefix + ".syn");
     next->words = std::make_unique<Mapped>(prefix + ".idx.kobalt");
-    if (!next->words->bytes || next->words->file.size() % 4 || !next->idx.open(QIODevice::ReadOnly) ||
-        !next->body.open(prefix + ".dict.dz"))
+    if (!next->words->bytes || next->words->file.size() % 4 || !next->idx.open(QIODevice::ReadOnly)
+        || !next->body.open(prefix + ".dict.dz"))
         return fail(error, "Installed dictionary is damaged.");
     if (next->syn.exists() && next->syn.size() > 0) {
         next->synonyms = std::make_unique<Mapped>(prefix + ".syn.kobalt");
-        if (!next->synonyms->bytes || next->synonyms->file.size() % 4 || !next->syn.open(QIODevice::ReadOnly))
+        if (!next->synonyms->bytes || next->synonyms->file.size() % 4
+            || !next->syn.open(QIODevice::ReadOnly))
             return fail(error, "Installed inflection index is damaged.");
     }
     QFile credits(QDir(directory).filePath("ATTRIBUTION"));
@@ -327,7 +372,9 @@ bool StarDict::open(const QString &directory, const QString &id, QString *error)
     data = std::move(next);
     return true;
 }
-DictionaryResult StarDict::lookup(const QString &word) {
+
+DictionaryResult StarDict::lookup(const QString &word)
+{
     DictionaryResult result;
     result.word = word;
     if (!data) {
@@ -341,7 +388,9 @@ DictionaryResult StarDict::lookup(const QString &word) {
     auto number = find(*data->words, data->idx, word.toUtf8());
     if (number < 0 && data->synonyms) {
         const auto synonym = find(*data->synonyms, data->syn, word.toUtf8());
-        if (synonym >= 0 && data->syn.seek(be32(reinterpret_cast<char *>(data->synonyms->bytes) + synonym * 4))) {
+        if (synonym >= 0
+            && data->syn.seek(
+                    be32(reinterpret_cast<char *>(data->synonyms->bytes) + synonym * 4))) {
             const auto entry = data->syn.read(260);
             const int zero = entry.indexOf('\0');
             if (zero > 0 && zero + 5 <= entry.size())
@@ -350,8 +399,8 @@ DictionaryResult StarDict::lookup(const QString &word) {
     }
     if (number < 0)
         return result;
-    if (number >= data->words->file.size() / 4 ||
-        !data->idx.seek(be32(reinterpret_cast<char *>(data->words->bytes) + number * 4))) {
+    if (number >= data->words->file.size() / 4
+        || !data->idx.seek(be32(reinterpret_cast<char *>(data->words->bytes) + number * 4))) {
         result.error = "Dictionary index is damaged.";
         return result;
     }
@@ -361,11 +410,135 @@ DictionaryResult StarDict::lookup(const QString &word) {
         result.error = "Dictionary index is damaged.";
         return result;
     }
-    const auto html = data->body.read(be32(entry.constData() + zero + 1), be32(entry.constData() + zero + 5));
+    const auto html =
+            data->body.read(be32(entry.constData() + zero + 1), be32(entry.constData() + zero + 5));
     if (html.isEmpty())
         result.error = "Dictionary definition is damaged.";
     else
         result.html = QString::fromUtf8(html);
     return result;
 }
+
+void FolderDictionaries::prepare(const QString &directory, const std::function<bool()> &cancelled)
+{
+    mainthread::BlockingOperation operation("dictionary-index-write");
+    QDirIterator files(directory, { "*.ifo" }, QDir::Files | QDir::NoSymLinks,
+                       QDirIterator::Subdirectories);
+    int checked = 0;
+    while (files.hasNext() && checked++ < 2048) {
+        const auto file = files.next();
+        if (cancelled && cancelled())
+            return;
+        const auto marker = file + ".kobalt-ready";
+        const QFileInfo info(file);
+        const auto prefix = info.path() + '/' + info.completeBaseName();
+        QByteArray fingerprint;
+        for (const auto &suffix : { ".ifo", ".idx", ".dict.dz", ".syn" }) {
+            const QFileInfo source(prefix + suffix);
+            fingerprint += QByteArray::number(source.size()) + ':'
+                    + QByteArray::number(source.lastModified().toMSecsSinceEpoch()) + '\n';
+        }
+        QFile previous(marker);
+        if (previous.open(QIODevice::ReadOnly) && previous.readAll() == fingerprint
+            && QFile::exists(prefix + ".idx.kobalt")
+            && (!QFile::exists(prefix + ".syn") || QFile::exists(prefix + ".syn.kobalt")))
+            continue;
+        previous.close();
+        QFile::remove(marker);
+        QString error;
+        if (!StarDict::prepare(info.path(), info.completeBaseName(), &error, cancelled))
+            continue;
+        QSaveFile ready(marker);
+        if (ready.open(QIODevice::WriteOnly)) {
+            ready.write(fingerprint);
+            ready.commit();
+        }
+    }
 }
+
+FolderDictionaries::FolderDictionaries(QString directory,
+                                       std::unique_ptr<DictionaryService> fallback)
+    : directory(std::move(directory)), fallback(std::move(fallback))
+{
+    QDirIterator files(this->directory, { "*.ifo.kobalt-ready" }, QDir::Files | QDir::NoSymLinks,
+                       QDirIterator::Subdirectories);
+    while (files.hasNext() && entries.size() < 2048) {
+        auto path = files.next();
+        path.chop(int(QStringLiteral(".kobalt-ready").size()));
+        QFile metadata(path);
+        if (!metadata.open(QIODevice::ReadOnly) || metadata.size() > 65536)
+            continue;
+        QString name, language;
+        for (const auto &line : QString::fromUtf8(metadata.readAll()).split('\n')) {
+            if (line.startsWith("bookname="))
+                name = line.mid(9).trimmed();
+            if (line.startsWith("lang="))
+                language = line.mid(5).trimmed();
+        }
+        const auto relative = QDir(this->directory).relativeFilePath(path.left(path.size() - 4));
+        entries.append({ "folder:" + relative,
+                         name.isEmpty() ? QFileInfo(path).completeBaseName() : name, language,
+                         false });
+    }
+    std::sort(entries.begin(), entries.end(),
+              [](const DictionaryChoice &a, const DictionaryChoice &b) {
+                  const int order = QString::compare(a.name, b.name, Qt::CaseInsensitive);
+                  return order ? order < 0 : a.id < b.id;
+              });
+}
+
+QVector<DictionaryChoice> FolderDictionaries::choices() const
+{
+    auto available = fallback ? fallback->choices() : QVector<DictionaryChoice>();
+    available += entries;
+    return available;
+}
+
+bool FolderDictionaries::select(const QString &book, const QString &id, QString *error)
+{
+    for (const auto &entry : entries) {
+        if (entry.id != id)
+            continue;
+        if (activeId != id) {
+            const QFileInfo file(QDir(directory).filePath(id.mid(7)));
+            auto dictionary = std::make_unique<StarDict>();
+            if (!dictionary->open(file.path(), file.fileName(), error))
+                return false;
+            active = std::move(dictionary);
+            activeId = id;
+        }
+        selected.insert(book, id);
+        return true;
+    }
+    if (fallback && fallback->select(book, id, error)) {
+        selected.insert(book, id);
+        return true;
+    }
+    return fail(error, "This dictionary is not available.");
+}
+
+DictionaryResult FolderDictionaries::lookup(const QString &book, const QString &word)
+{
+    DictionaryResult result;
+    result.word = word;
+    QString error;
+    const auto available = choices();
+    const auto id = selected.value(book, available.isEmpty() ? QString() : available.first().id);
+    if (fallback && !id.startsWith("folder:"))
+        return fallback->lookup(book, word);
+    if (!select(book, id, &error)) {
+        result.error = error;
+        return result;
+    }
+    result = active->lookup(word);
+    result.dictionaryId = id;
+    for (const auto &entry : entries)
+        if (entry.id == id) {
+            result.dictionary = entry.name;
+            result.language = entry.language;
+            break;
+        }
+    return result;
+}
+
+} // namespace kobalt

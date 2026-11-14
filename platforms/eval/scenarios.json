@@ -4,13 +4,15 @@
   "books": {
     "benchmark": {"file": "tests/fixtures/kobalt-benchmark.kepub.epub", "sha256": "db5ab9da816ec6a5e5db2a8026e4137867195e152c94b9c2181a9774d3c5b9e4", "package": true},
     "war-and-peace": {"file": "build/screenshot-books/pg2600-epub3.epub", "sha256": "0353122c5a554193a8a777d8156e7a02d9c2014cce90b26891e2057edd30556c"},
-    "notes": {"file": "tests/fixtures/perf-notes.epub", "sha256": "0c2c3d7ef3f362a095cb32575da69dca01df459c0a35253cbd4aaeaa630389df"}
+    "notes": {"file": "tests/fixtures/perf-notes.epub", "sha256": "0c2c3d7ef3f362a095cb32575da69dca01df459c0a35253cbd4aaeaa630389df"},
+    "songbook-1024": {"songs": 1024},
+    "songbook-10000": {"songs": 10000}
   },
   "scenarios": [
     {
       "id": "book.open",
       "kind": "e2e",
-      "paths": ["src/reading/", "src/engine/", "src/publication/", "src/interfaces/reader/window/", "dependencies/"],
+      "paths": ["src/reading/", "src/sync/", "src/engine/", "src/publication/", "src/app/reader/window/", "dependencies/"],
       "book": "benchmark",
       "steps": [
         {"close": true},
@@ -23,7 +25,7 @@
     {
       "id": "book.close",
       "kind": "e2e",
-      "paths": ["src/reading/", "src/storage/", "src/engine/", "src/interfaces/reader/window/", "src/interfaces/reader/ui/style/", "platforms/android/reader.cpp", "platforms/desktop/"],
+      "paths": ["src/reading/", "src/storage/", "src/engine/", "src/app/reader/window/", "src/ui/style/", "platforms/standalone/reader.cpp", "platforms/desktop/"],
       "book": "benchmark",
       "steps": [
         {"key": "PageDown"},
@@ -39,7 +41,7 @@
     {
       "id": "page.turn",
       "kind": "e2e",
-      "paths": ["src/reading/", "src/engine/", "src/interfaces/reader/views/", "src/interfaces/reader/window/reader_refresh.cpp"],
+      "paths": ["src/reading/", "src/engine/", "src/app/reader/views/", "src/app/reader/window/reader_refresh.cpp"],
       "book": "benchmark",
       "repeat": 20,
       "setup": [
@@ -68,7 +70,7 @@
     {
       "id": "page.turn.chapter",
       "kind": "e2e",
-      "paths": ["src/reading/", "src/engine/", "src/interfaces/reader/views/", "src/interfaces/reader/window/reader_refresh.cpp"],
+      "paths": ["src/reading/", "src/engine/", "src/app/reader/views/", "src/app/reader/window/reader_refresh.cpp"],
       "book": "benchmark",
       "steps": [
         {"press": "rrPage", "unless": "rrNavChapters"},
@@ -88,7 +90,7 @@
     {
       "id": "panel.menu",
       "kind": "e2e",
-      "paths": ["src/interfaces/reader/window/", "src/interfaces/reader/views/", "src/interfaces/reader/ui/"],
+      "paths": ["src/app/reader/window/", "src/app/reader/views/", "src/ui/"],
       "book": "benchmark",
       "steps": [
         {"press": "rrPage"},
@@ -103,7 +105,7 @@
     {
       "id": "panel.dictionary.long",
       "kind": "e2e",
-      "paths": ["src/interfaces/reader/panels/dictionary_panel.cpp", "src/interfaces/reader/ui/", "src/interfaces/reader/window/reader.cpp"],
+      "paths": ["src/app/reader/panels/dictionary_panel.cpp", "src/ui/", "src/app/reader/window/reader.cpp"],
       "book": "benchmark",
       "needs": ["dictionary"],
       "steps": [
@@ -120,7 +122,7 @@
     {
       "id": "panel.dictionary.short",
       "kind": "e2e",
-      "paths": ["src/interfaces/reader/panels/dictionary_panel.cpp", "src/interfaces/reader/ui/", "src/interfaces/reader/window/reader.cpp"],
+      "paths": ["src/app/reader/panels/dictionary_panel.cpp", "src/ui/", "src/app/reader/window/reader.cpp"],
       "book": "benchmark",
       "needs": ["dictionary"],
       "steps": [
@@ -137,7 +139,7 @@
     {
       "id": "reflow.font-size",
       "kind": "e2e",
-      "paths": ["src/reading/", "src/engine/", "src/interfaces/reader/window/", "dependencies/"],
+      "paths": ["src/reading/", "src/engine/", "src/app/reader/window/", "dependencies/"],
       "book": "benchmark",
       "repeat": 6,
       "steps": [
@@ -177,7 +179,7 @@
     {
       "id": "panel.settings",
       "kind": "e2e",
-      "paths": ["src/interfaces/reader/settings/", "src/interfaces/reader/ui/", "src/interfaces/reader/window/reader_settings.cpp"],
+      "paths": ["src/app/reader/settings/", "src/ui/", "src/app/reader/window/reader_settings.cpp"],
       "book": "benchmark",
       "steps": [
         {"press": "rrPage", "unless": "rrSettings"},
@@ -194,7 +196,7 @@
     {
       "id": "panel.styling.word-spacing",
       "kind": "e2e",
-      "paths": ["src/interfaces/reader/settings/", "src/interfaces/reader/ui/", "src/interfaces/reader/window/reader_settings.cpp", "src/reading/style_sample.cpp"],
+      "paths": ["src/app/reader/settings/", "src/ui/", "src/app/reader/window/reader_settings.cpp", "src/reading/style_sample.cpp"],
       "book": "benchmark",
       "steps": [
         {"press": "rrPage", "unless": "rrSettings"},
@@ -217,7 +219,7 @@
     {
       "id": "panel.styling.tracking",
       "kind": "e2e",
-      "paths": ["src/interfaces/reader/settings/", "src/interfaces/reader/ui/", "src/interfaces/reader/window/reader_settings.cpp", "src/reading/style_sample.cpp"],
+      "paths": ["src/app/reader/settings/", "src/ui/", "src/app/reader/window/reader_settings.cpp", "src/reading/style_sample.cpp"],
       "book": "benchmark",
       "steps": [
         {"press": "rrPage", "unless": "rrSettings"},
@@ -240,7 +242,7 @@
     {
       "id": "panel.styling.widows.entry",
       "kind": "e2e",
-      "paths": ["src/interfaces/reader/settings/","src/interfaces/reader/window/reader_settings.cpp","src/reading/style_sample.cpp"],
+      "paths": ["src/app/reader/settings/","src/app/reader/window/reader_settings.cpp","src/reading/style_sample.cpp"],
       "book": "benchmark",
       "steps": [
         {"press":"rrPage","unless":"rrSettings"},
@@ -266,7 +268,7 @@
     {
       "id": "panel.styling.widows.prepared",
       "kind": "e2e",
-      "paths": ["src/interfaces/reader/settings/","src/interfaces/reader/window/reader_settings.cpp","src/reading/style_sample.cpp"],
+      "paths": ["src/app/reader/settings/","src/app/reader/window/reader_settings.cpp","src/reading/style_sample.cpp"],
       "book": "benchmark",
       "setup": [
         {"press":"rrPage","unless":"rrSettings"},
@@ -300,7 +302,7 @@
     {
       "id": "panel.styling.page-spacing.entry",
       "kind": "e2e",
-      "paths": ["src/interfaces/reader/settings/","src/interfaces/reader/window/reader_settings.cpp","src/reading/style_sample.cpp"],
+      "paths": ["src/app/reader/settings/","src/app/reader/window/reader_settings.cpp","src/reading/style_sample.cpp"],
       "book": "benchmark",
       "steps": [
         {"press":"rrPage","unless":"rrSettings"},
@@ -326,7 +328,7 @@
     {
       "id": "panel.styling.page-spacing.prepared",
       "kind": "e2e",
-      "paths": ["src/interfaces/reader/settings/","src/interfaces/reader/window/reader_settings.cpp","src/reading/style_sample.cpp"],
+      "paths": ["src/app/reader/settings/","src/app/reader/window/reader_settings.cpp","src/reading/style_sample.cpp"],
       "book": "benchmark",
       "setup": [
         {"press":"rrPage","unless":"rrSettings"},
@@ -360,7 +362,7 @@
     {
       "id": "panel.acknowledgments",
       "kind": "e2e",
-      "paths": ["src/interfaces/reader/settings/acknowledgments.cpp", "src/interfaces/reader/ui/"],
+      "paths": ["src/app/reader/settings/acknowledgments.cpp", "src/ui/"],
       "book": "benchmark",
       "setup": [
         {"press": "rrPage", "unless": "rrSettings"},
@@ -387,7 +389,7 @@
     {
       "id": "panel.licence",
       "kind": "e2e",
-      "paths": ["src/interfaces/reader/settings/acknowledgments.cpp", "src/interfaces/reader/ui/"],
+      "paths": ["src/app/reader/settings/acknowledgments.cpp", "src/ui/"],
       "book": "benchmark",
       "setup": [
         {"press": "rrPage", "unless": "rrSettings"},
@@ -418,7 +420,7 @@
     {
       "id": "panel.footnote",
       "kind": "e2e",
-      "paths": ["src/interfaces/reader/panels/link_panel.cpp", "src/interfaces/reader/ui/", "src/interfaces/reader/window/reader.cpp"],
+      "paths": ["src/app/reader/panels/link_panel.cpp", "src/ui/", "src/app/reader/window/reader.cpp"],
       "book": "notes",
       "steps": [
         {"hold": {"link": "long note"}},
@@ -435,13 +437,33 @@
     {
       "id": "book.open.large",
       "kind": "e2e",
-      "paths": ["src/reading/", "src/engine/", "src/publication/", "src/interfaces/reader/window/", "dependencies/"],
+      "paths": ["src/reading/", "src/sync/", "src/engine/", "src/publication/", "src/app/reader/window/", "dependencies/"],
       "book": "war-and-peace",
       "steps": [
         {"open": "war-and-peace", "fresh": true},
         {"event": "reader-shown"}
       ],
       "sample": {"event": "reader-shown", "field": "total_ms", "stages": true}
+    },
+    {
+      "id": "memory.large.reading",
+      "kind": "memory",
+      "unit": "KiB",
+      "paths": ["src/", "dependencies/"],
+      "book": "war-and-peace",
+      "repeat": 1,
+      "steps": [{"settle": true}],
+      "sample": {"memory": "rss_kib"}
+    },
+    {
+      "id": "memory.large.kobalt",
+      "kind": "memory",
+      "unit": "KiB",
+      "paths": ["src/", "dependencies/"],
+      "book": "war-and-peace",
+      "repeat": 1,
+      "steps": [{"settle": true}],
+      "sample": {"memory": "kobalt_rss_kib"}
     },
     {
       "id": "memory.peak",
@@ -463,7 +485,7 @@
       "id": "sleep.close.stock",
       "kind": "e2e",
       "opt_in": true,
-      "paths": ["src/storage/sleep_snapshot.cpp","src/interfaces/reader/window/reader.cpp","platforms/kobo/common/"],
+      "paths": ["src/storage/sleep_snapshot.cpp","src/app/reader/window/reader.cpp","platforms/kobo/common/"],
       "book": "benchmark",
       "needs": ["sleep-persistence"],
       "warmup": 1,
@@ -496,7 +518,7 @@
       "id": "sleep.close.page",
       "kind": "e2e",
       "opt_in": true,
-      "paths": ["src/storage/sleep_snapshot.cpp","src/interfaces/reader/window/reader.cpp","platforms/kobo/common/"],
+      "paths": ["src/storage/sleep_snapshot.cpp","src/app/reader/window/reader.cpp","platforms/kobo/common/"],
       "book": "benchmark",
       "needs": ["sleep-persistence"],
       "warmup": 1,
@@ -529,7 +551,7 @@
       "id": "sleep.close.cover",
       "kind": "e2e",
       "opt_in": true,
-      "paths": ["src/storage/sleep_snapshot.cpp","src/interfaces/reader/window/reader.cpp","platforms/kobo/common/"],
+      "paths": ["src/storage/sleep_snapshot.cpp","src/app/reader/window/reader.cpp","platforms/kobo/common/"],
       "book": "benchmark",
       "needs": ["sleep-persistence"],
       "warmup": 1,
@@ -557,6 +579,93 @@
         {"open":"benchmark"}
       ],
       "sample": {"event":"book-close","field":"total_ms","stages":true}
-    }
+    },
+    {
+      "id": "kosync.wifi-off",
+      "kind": "e2e",
+      "opt_in": true,
+      "paths": ["src/app/reader/window/reader_kosync.cpp","src/sync/kosync.cpp","platforms/kobo/common/native_sync_network.cpp"],
+      "book": "benchmark",
+      "needs": ["kosync","wifi-control"],
+      "repeat": 5,
+      "setup": [
+        {"kosync":{"schema":1,"server":"https://127.0.0.1:9","username":"kobalt-eval","key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","device_id":"kobalt-eval","automatic":true,"sync_interval_minutes":0,"interval_ms":1000,"wake_wifi":true,"sync_on_open":false,"sync_on_sleep_wake":false,"sync_on_close":false}},
+        {"open":"benchmark"},
+        {"settle":true}
+      ],
+      "steps": [
+        {"wifi":"off"},
+        {"wait_ms":1500},
+        {"key":"PageDown"},
+        {"event":"kosync-network-finished","where":{"ready":true,"owned":true},"timeout":25000},
+        {"event":"main-thread-wait","where":{"operation":"wifi-off"},"timeout":30000}
+      ],
+      "sample": {"event":"main-thread-wait","field":"elapsed_ms"},
+      "teardown": [
+        {"kosync":{}},
+        {"open":"benchmark"}
+      ]
+    },
+    {
+      "id": "native-sync.page-turn",
+      "kind": "e2e",
+      "opt_in": true,
+      "paths": ["platforms/kobo/nickel-qt5/native_reading_session.cpp","platforms/kobo/nickel-qt6/native_reading_session.cpp","platforms/kobo/common/native_event_save.h"],
+      "book": "benchmark",
+      "needs": ["native-sync"],
+      "repeat": 5,
+      "setup": [
+        {"press":"rrPage","unless":"rrNavChapters"},
+        {"visible":"rrNavChapters"},
+        {"press":"rrNavChapters"},
+        {"visible":"rrChapter1"},
+        {"press":"rrChapter1"},
+        {"settle":true}
+      ],
+      "steps": [
+        {"native-sync":true},
+        {"open":"benchmark"},
+        {"mark":true},
+        {"key":"PageDown"},
+        {"event":"page-turn-painted","as":"turn1"},
+        {"key":"PageDown"},
+        {"event":"page-turn-painted","as":"turn2"},
+        {"key":"PageDown"},
+        {"event":"page-turn-painted","as":"turn3"},
+        {"key":"PageDown"},
+        {"event":"page-turn-painted","as":"turn4"},
+        {"key":"PageDown"},
+        {"event":"page-turn-painted","as":"turn5"},
+        {"mark_end":true},
+        {"event":"operation-end","where":{"operation":"nickel-session-stop-flush"},"earlier":true,"as":"stop-save","timeout":30000},
+        {"event":"operation-end","where":{"operation":"nickel-session-start-flush"},"earlier":true,"as":"start-save","timeout":30000},
+        {"event":"native-sync-end","earlier":true,"as":"sync","timeout":600000}
+      ],
+      "after": [
+        {"settle":true},
+        {"key":"PageUp"},
+        {"event":"page-turn-painted"},
+        {"key":"PageUp"},
+        {"event":"page-turn-painted"},
+        {"key":"PageUp"},
+        {"event":"page-turn-painted"},
+        {"key":"PageUp"},
+        {"event":"page-turn-painted"},
+        {"key":"PageUp"},
+        {"event":"page-turn-painted"},
+        {"settle":true}
+      ],
+      "sample": {"timer":true,"stages":{"turn1_ms":{"event":"turn1","field":"elapsed_ms"},"turn2_ms":{"event":"turn2","field":"elapsed_ms"},"turn3_ms":{"event":"turn3","field":"elapsed_ms"},"turn4_ms":{"event":"turn4","field":"elapsed_ms"},"turn5_ms":{"event":"turn5","field":"elapsed_ms"},"stop_save_ms":{"event":"stop-save","field":"elapsed_ms"},"start_save_ms":{"event":"start-save","field":"elapsed_ms"},"sync_ms":{"event":"sync","field":"elapsed_ms"}}}
+    },
+    {"kind": "e2e", "paths": ["src/engine/crengine/", "src/app/reader/", "src/reading/"], "book": "songbook-1024", "opt_in": true, "repeat": 3, "id": "toc.1024.open", "steps": [{"close": true}, {"event": "book-close"}, {"open": "songbook-1024"}, {"event": "reader-shown"}], "sample": {"event": "reader-shown", "field": "total_ms", "stages": true}},
+    {"kind": "e2e", "paths": ["src/engine/crengine/", "src/app/reader/", "src/reading/"], "book": "songbook-1024", "opt_in": true, "repeat": 3, "id": "toc.1024.panel", "steps": [{"press": "rrPage", "unless": "rrNavChapters"}, {"visible": "rrNavChapters"}, {"mark": true}, {"press": "rrNavChapters"}, {"visible": "rrChapter0"}, {"settle": true}], "sample": {"timer": true}, "after": [{"press": "rrContentsClose"}, {"hidden": "rrContents"}]},
+    {"kind": "e2e", "paths": ["src/engine/crengine/", "src/app/reader/", "src/reading/"], "book": "songbook-1024", "opt_in": true, "repeat": 3, "id": "toc.1024.page", "steps": [{"mark": true}, {"press": "rrContentsNext"}, {"settle": true}, {"press": "rrContentsPrevious"}, {"settle": true}], "sample": {"timer": true}, "setup": [{"press": "rrPage", "unless": "rrNavChapters"}, {"press": "rrNavChapters"}, {"visible": "rrChapter0"}], "teardown": [{"press": "rrContentsClose"}, {"hidden": "rrContents"}]},
+    {"kind": "e2e", "paths": ["src/engine/crengine/", "src/app/reader/", "src/reading/"], "book": "songbook-1024", "opt_in": true, "repeat": 3, "id": "toc.1024.jump", "steps": [{"press": "rrPage", "unless": "rrNavChapters"}, {"press": "rrNavChapters"}, {"visible": "rrChapter0"}, {"mark": true}, {"press": "rrChapter0"}, {"hidden": "rrContents"}, {"settle": true}], "sample": {"timer": true}},
+    {"kind": "memory", "unit": "KiB", "paths": ["src/engine/crengine/", "src/app/reader/", "src/reading/"], "book": "songbook-1024", "opt_in": true, "repeat": 3, "id": "toc.1024.memory", "steps": [{"settle": true}], "sample": {"memory": "rss_kib"}},
+    {"kind": "e2e", "paths": ["src/engine/crengine/", "src/app/reader/", "src/reading/"], "book": "songbook-10000", "opt_in": true, "repeat": 3, "id": "toc.10000.open", "steps": [{"close": true}, {"event": "book-close"}, {"open": "songbook-10000"}, {"event": "reader-shown"}], "sample": {"event": "reader-shown", "field": "total_ms", "stages": true}},
+    {"kind": "e2e", "paths": ["src/engine/crengine/", "src/app/reader/", "src/reading/"], "book": "songbook-10000", "opt_in": true, "repeat": 3, "id": "toc.10000.panel", "steps": [{"press": "rrPage", "unless": "rrNavChapters"}, {"visible": "rrNavChapters"}, {"mark": true}, {"press": "rrNavChapters"}, {"visible": "rrChapter0"}, {"settle": true}], "sample": {"timer": true}, "after": [{"press": "rrContentsClose"}, {"hidden": "rrContents"}]},
+    {"kind": "e2e", "paths": ["src/engine/crengine/", "src/app/reader/", "src/reading/"], "book": "songbook-10000", "opt_in": true, "repeat": 3, "id": "toc.10000.page", "steps": [{"mark": true}, {"press": "rrContentsNext"}, {"settle": true}, {"press": "rrContentsPrevious"}, {"settle": true}], "sample": {"timer": true}, "setup": [{"press": "rrPage", "unless": "rrNavChapters"}, {"press": "rrNavChapters"}, {"visible": "rrChapter0"}], "teardown": [{"press": "rrContentsClose"}, {"hidden": "rrContents"}]},
+    {"kind": "e2e", "paths": ["src/engine/crengine/", "src/app/reader/", "src/reading/"], "book": "songbook-10000", "opt_in": true, "repeat": 3, "id": "toc.10000.jump", "steps": [{"press": "rrPage", "unless": "rrNavChapters"}, {"press": "rrNavChapters"}, {"visible": "rrChapter0"}, {"mark": true}, {"press": "rrChapter0"}, {"hidden": "rrContents"}, {"settle": true}], "sample": {"timer": true}},
+    {"kind": "memory", "unit": "KiB", "paths": ["src/engine/crengine/", "src/app/reader/", "src/reading/"], "book": "songbook-10000", "opt_in": true, "repeat": 3, "id": "toc.10000.memory", "steps": [{"settle": true}], "sample": {"memory": "rss_kib"}}
   ]
 }

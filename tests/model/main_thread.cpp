@@ -1,38 +1,45 @@
 #include "support/main_thread.h"
 #include "storage/record_writer.h"
+#include "storage/profile_database.h"
+#include "storage/reader_storage.h"
 #include "support/diagnostics.h"
 #include <QTemporaryDir>
 #include <QCoreApplication>
+#include <QJsonObject>
 #include <QStringList>
+#include <QTimer>
 #include <cstdio>
 #include <thread>
 #include "check.h"
 
 using namespace kobalt;
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
     QCoreApplication app(argc, argv);
     QTemporaryDir logs;
     initializeDiagnostics(logs.path(), false);
     QJsonObject allowedWait;
     setDiagnosticObserver([&](const QJsonObject &event) {
-        if (event.value("event").toString() == "main-thread-wait" &&
-            event.value("operation").toString() == "record-writer-write")
+        if (event.value("event").toString() == "main-thread-wait"
+            && event.value("operation").toString() == "record-writer-write")
             allowedWait = event;
     });
     QStringList violations;
-    mainthread::setViolationHandler([&](const char *operation) { violations.append(QString::fromLatin1(operation)); });
+    mainthread::setViolationHandler(
+            [&](const char *operation) { violations.append(QString::fromLatin1(operation)); });
     storage::RecordWriter writer;
     const auto write = [&] { return writer.writeNow([] { return true; }); };
 
-    require(write() && violations.isEmpty(), "A main-thread write without an interactive screen was reported");
+    require(write() && violations.isEmpty(),
+            "A main-thread write without an interactive screen was reported");
     {
         bool reading = false;
         mainthread::Interaction screen([&] { return reading; });
         require(write() && violations.isEmpty(), "A screen that takes no input reported a write");
         reading = true;
         require(mainthread::interactive(), "A screen that takes input was not interactive");
-        require(write() && violations == QStringList{"record-writer-write"},
+        require(write() && violations == QStringList{ "record-writer-write" },
                 "A main-thread write during input was not reported");
         violations.clear();
         {
@@ -40,8 +47,8 @@ int main(int argc, char **argv) {
             require(!mainthread::interactive() && write() && violations.isEmpty(),
                     "A deliberate wait was reported");
         }
-        require(allowedWait.value("allowance").toString() == "the test waits deliberately" &&
-                    allowedWait.value("elapsed_ms").toDouble(-1) >= 0,
+        require(allowedWait.value("allowance").toString() == "the test waits deliberately"
+                        && allowedWait.value("elapsed_ms").toDouble(-1) >= 0,
                 "Allowed operation lost its name, reason or duration");
         require(mainthread::interactive(), "Closing a deliberate wait did not restore the check");
         bool written = false;
@@ -58,8 +65,26 @@ int main(int argc, char **argv) {
     }
     require(!mainthread::interactive() && write() && violations.isEmpty(),
             "A destroyed screen still made writes report");
+
+    // The application closes the shared profile when it quits, after its event
+    // loop has ended. No input can arrive then, even while a screen still
+    // counts as taking input, so the drain is not a violation.
+    QTemporaryDir profile;
+    require(storage::writeRecord(profile.path(), "quit-check", {}, { { "saved", true } }),
+            "The profile was not opened");
+    {
+        mainthread::Interaction screen([] { return true; });
+        QTimer::singleShot(0, &app, &QCoreApplication::quit);
+        app.exec();
+        require(violations.isEmpty(), "Closing the profile at quit was reported");
+    }
+    require(storage::readRecord(profile.path(), "quit-check", {}).object.value("saved").toBool(),
+            "The record was lost when the application quit");
+    storage::closeProfile();
     mainthread::setViolationHandler({});
     setDiagnosticObserver({});
     flushDiagnostics();
-    std::puts("PASS: main-thread blocking reports, deliberate waits, other threads and screen lifetime");
+    std::puts(
+            "PASS: main-thread blocking reports, deliberate waits, other threads, screen lifetime "
+            "and quit");
 }

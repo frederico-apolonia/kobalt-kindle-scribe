@@ -1,0 +1,98 @@
+#pragma once
+#include "ui/controls/buttons.h"
+#include "ui/controls/options.h"
+#include "ui/dialogs/modals.h"
+#include "platform/api/keyboard_controller.h"
+#include "sync/kosync_schedule.h"
+#include "reading/native_sync_policy.h"
+#include <QPointer>
+#include <QDateTime>
+
+namespace kobalt::reader {
+class KosyncScheduleSheet;
+
+class KosyncPage final : public QWidget
+{
+public:
+    KosyncPage(QWidget *parent, QWidget *overlayParent, KeyboardFactory keyboard);
+    ~KosyncPage() override;
+    void setAccount(const QString &server, const QString &username, bool signedIn, bool automatic);
+    void setSchedule(const kosync::Schedule &schedule);
+    // Which platform moments the Automatic sync sheet offers.
+    void setScheduleFeatures(bool sleepWake, bool wifi);
+    void setNativeCloudSync(const NativeSyncPolicy &policy);
+    void setLastSync(const QDateTime &time);
+    void setDeviceName(const QString &name, const QString &defaultName);
+    void setFilenameMatching(bool enabled);
+    void setSendMetadata(bool enabled);
+    void setStatus(const QString &status, bool busy);
+    void fitWidth(int width);
+
+    QString server() const { return server_; }
+
+    QString username() const { return username_; }
+
+    QString takePassword();
+    void dismissEditor();
+    QPointer<ui::ModalOverlay> editorDialog;
+    std::function<void()> loginRequested, logoutRequested, syncRequested;
+
+    // Zen mode's settings page offers Sync now and Automatic sync on their
+    // own, only while this page could offer them.
+    bool syncReady() const { return signedIn_ && !nativeCloudSync_ && !accountEdited_; }
+
+    bool syncEnabled() const;
+    QString lastSyncText() const;
+    QString automaticCaption() const;
+    void syncNow();
+
+    void openSchedule() { showSchedule(); }
+
+    // Called after the account, schedule, last sync or status changes.
+    std::function<void()> stateChanged;
+    std::function<void(bool)> automaticChanged;
+    std::function<void(const kosync::Schedule &)> scheduleChanged;
+    std::function<void(const QString &)> deviceNameChanged;
+    std::function<void(bool)> filenameMatchingChanged;
+    std::function<void(bool)> sendMetadataChanged;
+
+protected:
+    void hideEvent(QHideEvent *event) override;
+    bool eventFilter(QObject *object, QEvent *event) override;
+
+private:
+    void edit(int field);
+    void placeEditor();
+    void maskPassword();
+    void updateCaptions();
+    void showSyncHelp();
+    void dismissSyncHelp();
+    void showMatchingChoices();
+    void dismissMatchingChoices();
+    void showSchedule();
+    void dismissSchedule();
+    void updateAutomaticCaption();
+    QPointer<ui::NoticeModal> syncHelp_;
+    QPointer<ui::NoticeModal> matchingDialog_;
+    QPointer<KosyncScheduleSheet> scheduleSheet_;
+    QWidget *overlayParent_;
+    KeyboardFactory makeKeyboard_;
+    std::unique_ptr<KeyboardController> keyboard_;
+    QString server_, username_, password_, deviceName_, defaultDeviceName_;
+    bool signedIn_ = false;
+    bool submitting_ = false;
+    bool accountEdited_ = false;
+    bool nativeCloudSync_ = false;
+    bool filenameMatching_ = false;
+    bool automatic_ = true;
+    kosync::Schedule schedule_;
+    bool sleepWake_ = false, wifi_ = false;
+    ui::CaptionButton *serverButton_, *usernameButton_, *passwordButton_, *deviceNameButton_,
+            *matchingButton_;
+    ui::DescribedOption *metadataOption_;
+    QPushButton *login_, *logout_, *sync_, *learnMore_;
+    ui::CaptionButton *automaticButton_;
+    QLabel *description_, *sideloadGuidance_, *status_, *lastSync_;
+    QWidget *syncInformation_;
+};
+} // namespace kobalt::reader

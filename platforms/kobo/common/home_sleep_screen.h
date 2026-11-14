@@ -1,4 +1,5 @@
 #pragma once
+#include <QVector>
 #include "storage/reader_storage.h"
 #include "reading/sleep_screen.h"
 #include "platform/api/window_presentation.h"
@@ -6,13 +7,16 @@
 #include <future>
 
 namespace kobalt::nickel {
-class HomeSleepScreen final : public QObject {
+class HomeSleepScreen final : public QObject
+{
 public:
     explicit HomeSleepScreen(storage::Paths paths, QObject *parent);
     void remember(const sleep::Snapshot &, const QString &identity);
     void forget();
     void prepare(bool enabled, bool powerOff = false);
     void preparePowerOff(sleep::Snapshot);
+    // Rebuild from the last book's durable privacy choice, never a cached image.
+    bool preparePrivateScreen(bool powerOff = false, const QString &identity = {});
     void persistPowerOff(const QString &identity);
     void present();
     void clear();
@@ -27,11 +31,19 @@ private:
     void updateBattery();
     storage::Paths paths;
     sleep::Snapshot snapshot, shutdownBackdrop;
+    // What lies under the status, so a battery change repaints only that.
+    QVector<QImage> underlay;
     void save(const sleep::Snapshot &, const QString &identity);
     bool poweredOff = false, invalidated = false;
     void compose();
     std::unique_ptr<WindowPresentation> presentation;
-    struct Saved { bool ok = false; QString token; };
+
+    struct Saved
+    {
+        bool ok = false;
+        QString token;
+    };
+
     std::future<Saved> pendingSave;
     sleep::Snapshot remembered;
     QString rememberedToken;
@@ -39,4 +51,4 @@ private:
     std::shared_ptr<QJsonObject> saveMeasurement;
 #endif
 };
-}
+} // namespace kobalt::nickel

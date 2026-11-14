@@ -1,6 +1,6 @@
 #include "sleep_screen.h"
-#include "interfaces/reader/ui/style/fonts.h"
-#include "interfaces/reader/views/sleep_screen.h"
+#include "ui/style/fonts.h"
+#include "app/reader/views/sleep_screen.h"
 #include "storage/sleep_snapshot.h"
 #include "support/strings.h"
 #include <QFile>

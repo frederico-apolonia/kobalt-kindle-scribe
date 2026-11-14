@@ -1,9 +1,9 @@
 #pragma once
 #include <QJsonObject>
 #ifndef KOBALT_NO_SENSORS
-#include <QOrientationSensor>
+#  include <QOrientationSensor>
 #else
-#include <QObject>
+#  include <QObject>
 class QOrientationSensor;
 #endif
 #include <QPointer>
@@ -22,7 +22,8 @@ Qt::ScreenOrientation shownOrientation(const QScreen *screen);
 
 class ReaderOrientation : public QObject
 #ifndef KOBALT_NO_SENSORS
-    , private QOrientationFilter
+    ,
+                          private QOrientationFilter
 #endif
 {
 public:
@@ -30,7 +31,8 @@ public:
     // Ownership begins before the first turn and ends after stop() prepares
     // Nickel's orientation. Repeated start/stop calls do not repeat callbacks.
     ReaderOrientation(QOrientationSensor *sensor, std::function<void(Qt::ScreenOrientation)> turn,
-                      std::function<void(bool)> rotationOwnership = {});
+                      std::function<void(bool)> rotationOwnership = {},
+                      std::function<bool()> nativeRotationAllowed = {});
     ~ReaderOrientation() override;
     void configure(const QJsonObject &settings);
     // Start in a permitted sensor or shown orientation. After a sleep handoff,
@@ -47,26 +49,28 @@ public:
     void stop(bool keepForSleep = false);
     // Cancel pending turns and discard readings from the sleep request onward.
     // Keep the filter installed so Nickel cannot rotate the sleep screen.
+    // The host can permit native sensor delivery while its awake PIN screen
+    // is visible, without resuming the reader or replacing its saved orientation.
     void freeze();
+    // Ignore manual turns while frozen so wake can restore the reading orientation.
     void rotate();
     bool setAutomatic(bool enabled);
     void setBlocked(bool blocked);
-    bool automaticAvailable() const {
-        return sensor != nullptr;
-    }
+
+    bool automaticAvailable() const { return sensor != nullptr; }
+
     // Auto permits every sensor orientation. With Auto off, sensor devices
     // still follow both orientations matching manual(), normalized to an axis.
     // Devices without a sensor keep the exact manual orientation.
-    bool automatic() const {
-        return automaticRotation;
-    }
-    Qt::ScreenOrientation manual() const {
-        return manualOrientation;
-    }
+    bool automatic() const { return automaticRotation; }
+
+    Qt::ScreenOrientation manual() const { return manualOrientation; }
+
     QJsonObject settings() const;
 
 private:
     std::function<void(bool)> rotationOwnership;
+    std::function<bool()> nativeRotationAllowed;
 #ifndef KOBALT_NO_SENSORS
     QPointer<QOrientationSensor> sensor;
 #else
@@ -85,7 +89,8 @@ private:
 #endif
     quint64 latestTimestamp = 0;
     bool frozen = false;
-    bool active = false, sleeping = false, blocked = false, automaticRotation = false, startedSensor = false;
+    bool active = false, sleeping = false, blocked = false, automaticRotation = false,
+         startedSensor = false;
 #ifndef KOBALT_NO_SENSORS
     bool filter(QOrientationReading *reading) override;
 #endif
@@ -93,9 +98,11 @@ private:
     bool permits(Qt::ScreenOrientation orientation) const;
     void follow();
     void deliver();
-    void apply(Qt::ScreenOrientation value) {
+
+    void apply(Qt::ScreenOrientation value)
+    {
         currentOrientation = value;
         turn(value);
     }
 };
-}
+} // namespace kobalt

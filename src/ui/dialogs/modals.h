@@ -1,0 +1,235 @@
+#pragma once
+#include "ui/controls/panels.h"
+#include <QBoxLayout>
+#include <QDialog>
+#include <QImage>
+#include <QPixmap>
+#include <QRegion>
+#include <QPushButton>
+#include <QPointer>
+#include <QTimer>
+#include <functional>
+
+namespace kobalt::ui {
+class PagerBar;
+
+// All centered notices share this card, including nonblocking feedback.
+class PopupCard : public Panel
+{
+public:
+    explicit PopupCard(QWidget *parent);
+
+    QVBoxLayout *rows() const { return contentRows; }
+
+    struct Heading
+    {
+        QLabel *title, *description;
+    };
+
+    Heading heading(const QString &title, const QString &description = {},
+                    const QString &titleName = {}, const QString &descriptionName = {});
+    QLabel *title(const QString &text, const QString &name = {});
+    QLabel *message(const QString &text, const QString &name = {});
+    QHBoxLayout *actions();
+    void image(const QImage &image);
+    void adaptiveActions(const QVector<QPushButton *> &buttons);
+    void fitToWidth(int width);
+    // A card taller than `height`, as on a phone in landscape, keeps its first
+    // row and its actions and pages the rows between them. Call after
+    // fitToWidth(); a card that fits shows every row again.
+    void fitToHeight(int height);
+
+protected:
+    // A tap on the card's own padding, title or text stays on the card. It
+    // does not reach the backdrop, which would close the pop-up.
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+
+private:
+    QVBoxLayout *contentRows;
+    PagerBar *rowPager = nullptr;
+    QVector<QVector<QWidget *>> rowPages;
+    QVector<QPointer<QWidget>> pagedRows;
+    int rowPage = 0;
+    void showRowPage(int page);
+    // The card joins list rows to headings and prose, including nested sections.
+    void updateListDividers();
+    QBoxLayout *actionRows = nullptr;
+    QVector<QPushButton *> actionButtons;
+    QLabel *artwork = nullptr;
+    QImage artworkImage;
+};
+
+// The input barrier can pattern the background for settings choices. Transparent
+// overlays keep local refreshes for progress and anchored reading tools.
+class ModalOverlay : public QWidget
+{
+public:
+    explicit ModalOverlay(QWidget *parent);
+    void setVisible(bool visible) override;
+
+    PopupCard *card() const { return content; }
+
+    // Nonblocking anchored menus receive input only over their card and arrow.
+    // Page gestures and controls outside those pixels remain available.
+    void setInputBarrier(bool enabled);
+    // Keep underlying adjustment handles usable without dismissing the menu.
+    void setInputExclusions(const QRegion &region);
+    // The patterned backdrop covers the parent only while this overlay blocks input.
+    void setDimmed(bool enabled);
+
+    bool inputBarrier() const { return blocksInput; }
+
+    void centerCard();
+
+    // Restrict text-entry cards to the part of the screen above the keyboard.
+    void setCardArea(const QRect &area)
+    {
+        cardArea = area;
+        centerCard();
+    }
+
+    void fitCard();
+    void setDelayedProgress(bool active, qint64 elapsedMilliseconds, int percent,
+                            const QString &message = {});
+    // Window coordinates for a value-only update of the visible progress bar.
+    // Appearance, message and layout changes keep the modal's normal refresh.
+    QRect progressUpdateRect(int percent, const QString &message = {}) const;
+
+    enum class AnchorSide { Below, Above, Left };
+
+    void anchorTo(const QRect &bounds, AnchorSide side = AnchorSide::Below,
+                  const QPoint &sideOffset = {})
+    {
+        anchor = bounds;
+        anchorSide = side;
+        anchorOffset = sideOffset;
+        centerCard();
+    }
+
+    std::function<void()> dismissed;
+
+protected:
+    bool eventFilter(QObject *object, QEvent *event) override;
+    void resizeEvent(QResizeEvent *) override;
+    void paintEvent(QPaintEvent *) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    bool focusNextPrevChild(bool next) override;
+
+private:
+    void updateInputRegion();
+    bool blocksInput = true, dimmed = false;
+    PopupCard *content;
+    QWidget *pointer;
+    QRect anchor, cardArea;
+    AnchorSide anchorSide = AnchorSide::Below;
+    QPoint anchorOffset;
+    QRegion inputExclusions;
+    ProgressBar *loadingProgress = nullptr;
+    QLabel *loadingMessage = nullptr;
+};
+
+struct ModalContent
+{
+    QString description;
+    QString title;
+    QImage image;
+    // The object name of the title label. Empty means "rrModalTitle".
+    QString titleName = {};
+};
+
+struct ModalAction
+{
+    QString text;
+    QString name;
+};
+
+QPushButton *makeModalButton(QWidget *parent, const ModalAction &action, bool primary);
+// The primary action has a bold label. A choice can move that weight to the
+// safer action, as the sync choice does when the synced position is behind.
+void setModalActionPrimary(QPushButton *button, bool primary);
+
+// Brief, nonblocking confirmation anchored to the button that caused it.
+class ButtonFeedback final : public ModalOverlay
+{
+public:
+    explicit ButtonFeedback(QWidget *parent);
+
+    struct Placement
+    {
+        AnchorSide side;
+        QRect area;
+        QPoint sideOffset;
+    };
+
+    void showFor(QWidget *button, const QString &text,
+                 const Placement &placement = { AnchorSide::Above, {}, {} });
+    void reposition();
+
+protected:
+    void hideEvent(QHideEvent *event) override;
+
+private:
+    QPointer<QWidget> target;
+    Placement placement{ AnchorSide::Above, {}, {} };
+    QLabel *label;
+    QTimer hideTimer;
+};
+
+class NoticeModal : public ModalOverlay
+{
+public:
+    NoticeModal(QWidget *parent, const ModalContent &content, const ModalAction &action);
+
+    QLabel *titleLabel() const { return title; }
+
+    QLabel *descriptionLabel() const { return description; }
+
+    QPushButton *primaryButton() const { return primary; }
+
+private:
+    QLabel *title;
+    QLabel *description;
+    QPushButton *primary;
+};
+
+class ChoiceModal : public ModalOverlay
+{
+public:
+    ChoiceModal(QWidget *parent, const ModalContent &content, const ModalAction &secondary,
+                const ModalAction &primary);
+
+    QLabel *titleLabel() const { return title; }
+
+    QLabel *descriptionLabel() const { return description; }
+
+    QPushButton *primaryButton() const { return primary; }
+
+    QPushButton *secondaryButton() const { return secondary; }
+
+private:
+    QLabel *title;
+    QLabel *description;
+    QPushButton *primary;
+    QPushButton *secondary;
+};
+
+// Opening a book has no Reader parent yet. This modal host captures the
+// library only in RAM and uses the same overlay and card as in-reader alerts.
+class PopupWindow : public QDialog
+{
+public:
+    explicit PopupWindow(QWidget *background, bool dark = false);
+
+    PopupCard *card() const { return overlay->card(); }
+
+protected:
+    void paintEvent(QPaintEvent *) override;
+
+private:
+    QPixmap background;
+    ModalOverlay *overlay;
+};
+} // namespace kobalt::ui

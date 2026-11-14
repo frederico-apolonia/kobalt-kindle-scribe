@@ -8,6 +8,8 @@ mkdir -p build
 scratch=$(mktemp -d "$root/build/release-check.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 cmake "-DTEST_TMP_ROOT=$scratch" -P platforms/strings-test.cmake
+cmake "-DTEST_TMP_ROOT=$scratch" -P platforms/checks/source-checks-test.cmake
+cmake "-DTEST_TMP_ROOT=$scratch" -P platforms/test-validation-record.cmake
 cat > "$scratch/version.cmake" <<'CMAKE'
 include("$ENV{KOBALT_TEST_ROOT}/platforms/release-version.cmake")
 kobalt_release_version(actual v1.0-beta.4)
@@ -22,6 +24,117 @@ done
 for version in '../bad' '1.0' 'v1.0;bad' 'v1.0/evil'; do
     if KOBALT_RELEASE_VERSION=$version cmake -P "$scratch/version.cmake" > "$scratch/error" 2>&1; then echo 'Accepted invalid version' >&2; exit 1; fi
 done
+# Build provenance selects logging, even when branch versions contain beta.
+for ref in refs/heads/main refs/heads/develop refs/heads/nightly; do
+    [[ $(GITHUB_REF=$ref bash platforms/ci/diagnostics.sh v1.0-beta.6) == ON ]]
+done
+for version in v1.0 v1.0-beta.6 v1.0-RC.1; do
+    [[ $(GITHUB_REF=refs/tags/$version bash platforms/ci/diagnostics.sh "$version") == OFF ]]
+done
+for version in v1.0-nightly v1.0-nightly.12 v1.0-interim.3; do
+    [[ $(GITHUB_REF=refs/tags/$version bash platforms/ci/diagnostics.sh "$version") == ON ]]
+done
+# Exercise the real CI wrapper with fixture SDK/package builders.
+mkdir -p "$scratch/ci/platforms/ci" "$scratch/ci/platforms/kobo" "$scratch/ci-bin"
+cp platforms/ci/{build,diagnostics}.sh "$scratch/ci/platforms/ci/"
+printf '#!/bin/bash\nprintf "%%s\\n" "$KOBALT_RELEASE_VERSION"\n' > "$scratch/ci/platforms/ci/version.sh"
+printf '#!/bin/bash\necho fixture-sdk\n' > "$scratch/ci/platforms/sdk-image.sh"
+printf '#!/bin/bash\nexit 0\n' > "$scratch/ci-bin/docker"
+chmod +x "$scratch/ci-bin/docker"
+cat > "$scratch/ci/platforms/kobo/build.sh" <<'SH'
+#!/bin/bash
+set -eu
+mkdir -p "build/kobo-$1"
+suffix=
+[[ $KOBALT_VERBOSE_DIAGNOSTICS != ON ]] || suffix=-diagnostic
+printf '%s' "$KOBALT_VERBOSE_DIAGNOSTICS" > "build/kobo-$1/Kobalt-$1$suffix.zip"
+printf '%s' "$JOBS" > "build/kobo-$1/jobs"
+printf '%s' "$KOBALT_DOCKER_CPUS" > "build/kobo-$1/cpus"
+SH
+for target in qt5 qt6; do
+    for channel in release interim; do
+        if [[ $channel == release ]]; then ref=refs/tags/v1.0-beta.6; expected=OFF
+        else ref=refs/heads/develop; expected=ON; fi
+        KOBALT_DOCKER_CPUS=2 JOBS=3 GITHUB_REF=$ref KOBALT_RELEASE_VERSION=v1.0-beta.6 PATH="$scratch/ci-bin:$PATH" \
+            bash "$scratch/ci/platforms/ci/build.sh" "$target"
+        [[ $(cat "$scratch/ci/build/release/Kobalt-$target.zip") == "$expected" ]]
+        [[ $(cat "$scratch/ci/build/kobo-$target/jobs") == 3 ]]
+        [[ $(cat "$scratch/ci/build/kobo-$target/cpus") == 2 ]]
+    done
+done
+env -u JOBS -u KOBALT_DOCKER_CPUS GITHUB_REF=refs/heads/develop KOBALT_RELEASE_VERSION=v1.0-beta.6 PATH="$scratch/ci-bin:$PATH" \
+    bash "$scratch/ci/platforms/ci/build.sh" qt6
+[[ $(cat "$scratch/ci/build/kobo-qt6/jobs") == "$(getconf _NPROCESSORS_ONLN)" ]]
+[[ $(cat "$scratch/ci/build/kobo-qt6/cpus") == "$(getconf _NPROCESSORS_ONLN)" ]]
+if JOBS=invalid PATH="$scratch/ci-bin:$PATH" bash "$scratch/ci/platforms/ci/build.sh" qt6 > "$scratch/error" 2>&1; then
+    echo 'CI accepted invalid compiler parallelism' >&2; exit 1
+fi
+# Run the native wrapper with fake tools, including its container command.
+# Tags cannot request reduced coverage; branches keep the everyday mode.
+mkdir -p "$scratch/native/platforms/ci" "$scratch/native/dependencies" "$scratch/native-bin"
+cp platforms/ci/native-tests.sh "$scratch/native/platforms/ci/"
+cp dependencies/cache.cmake "$scratch/native/dependencies/"
+cp platforms/sdk-image.sh "$scratch/native/platforms/"
+cat > "$scratch/native-bin/cmake" <<'SH'
+#!/bin/bash
+if [[ $1 == -P ]]; then
+    printf '%s/cache\n' "$KOBALT_NATIVE_FIXTURE"
+else
+    for argument in "$@"; do
+        if [[ $argument == -DKOBALT_SDK_ID=* ]]; then
+            printf '%s' "${argument#*=}" > "$KOBALT_NATIVE_FIXTURE/sdk-id"
+        fi
+    done
+fi
+SH
+cat > "$scratch/native-bin/ctest" <<'SH'
+#!/bin/bash
+printf '%s\n' "$KOBALT_TEST_ALL_VARIANTS" > "$KOBALT_NATIVE_FIXTURE/variants"
+printf '%s\n' "$*" > "$KOBALT_NATIVE_FIXTURE/ctest-args"
+exit "${KOBALT_NATIVE_FAILURE:-0}"
+SH
+cat > "$scratch/native-bin/docker" <<'SH'
+#!/bin/bash
+set -eu
+[[ $1 != pull ]] || exit 0
+if [[ $1 == image && $2 == inspect ]]; then printf 'fixture-sdk\n'; exit 0; fi
+[[ $1 == run ]]
+shift
+environment=()
+while [[ $1 != bash ]]; do
+    if [[ $1 == -e ]]; then environment+=("$2"); shift; fi
+    shift
+done
+env "${environment[@]}" "$@"
+SH
+chmod +x "$scratch/native-bin/"*
+export KOBALT_NATIVE_FIXTURE="$scratch/native"
+for ref in refs/heads/develop refs/heads/main refs/tags/v1.0-beta.6 refs/tags/v1.0; do
+    [[ $ref != refs/tags/* ]] && expected=0 || expected=1
+    GITHUB_REF=$ref KOBALT_TEST_ALL_VARIANTS=$((1 - expected)) JOBS=2 \
+        CONTAINER_ENGINE="$scratch/native-bin/docker" CMAKE_COMMAND="$scratch/native-bin/cmake" \
+        PATH="$scratch/native-bin:$PATH" bash "$scratch/native/platforms/ci/native-tests.sh"
+    [[ $(cat "$scratch/native/variants") == "$expected" ]]
+    [[ $(cat "$scratch/native/sdk-id") == fixture-sdk ]]
+done
+if GITHUB_REF=refs/tags/v1.0 KOBALT_NATIVE_FAILURE=7 JOBS=2 \
+    CONTAINER_ENGINE="$scratch/native-bin/docker" CMAKE_COMMAND="$scratch/native-bin/cmake" \
+    PATH="$scratch/native-bin:$PATH" bash "$scratch/native/platforms/ci/native-tests.sh"; then
+    echo 'Native CI ignored a failed test suite' >&2; exit 1
+fi
+GITHUB_REF=refs/heads/develop JOBS=2 KOBALT_TEST_SHARD=2 KOBALT_TEST_SHARDS=3 \
+    CONTAINER_ENGINE="$scratch/native-bin/docker" CMAKE_COMMAND="$scratch/native-bin/cmake" \
+    PATH="$scratch/native-bin:$PATH" bash "$scratch/native/platforms/ci/native-tests.sh" test
+[[ $(cat "$scratch/native/ctest-args") == '--preset linux --parallel 2 -I 2,,3' ]]
+rm "$scratch/native/ctest-args"
+GITHUB_REF=refs/heads/develop JOBS=2 \
+    CONTAINER_ENGINE="$scratch/native-bin/docker" CMAKE_COMMAND="$scratch/native-bin/cmake" \
+    PATH="$scratch/native-bin:$PATH" bash "$scratch/native/platforms/ci/native-tests.sh" build
+[[ ! -e "$scratch/native/ctest-args" ]]
+if KOBALT_TEST_SHARD=3 KOBALT_TEST_SHARDS=2 bash platforms/ci/native-tests.sh test; then
+    echo 'Native CI accepted an invalid shard' >&2; exit 1
+fi
+echo 'PASS: native CI coverage selection, sharding and failure propagation'
 # Source manifests must have disjoint names and complete checksums.
 jq -es '([.[0]|keys[]] + [.[1]|keys[]]) as $keys | ($keys|length)==($keys|unique|length) and (all(.[]|to_entries[]; (.key|test("^[a-z0-9-]+$")) and (.value.url|startswith("https://")) and (.value.sha256|test("^[a-f0-9]{64}$"))))' dependencies/manifest.json dependencies/release-sources.json > /dev/null
 # Fail closed before consulting tools or producing an APK when secrets are absent.
@@ -43,8 +156,9 @@ CONTAINER_ENGINE="$scratch/container-engine" KOBALT_ANDROID_IMAGE=fixture-sdk KO
     bash platforms/android/build.sh
 # A Git-free source export must not inherit its enclosing checkout's identity.
 exported="$scratch/export/application"
-mkdir -p "$exported/platforms/android" "$exported/platforms/kobo" "$exported/assets"
-cp platforms/source-info.cmake platforms/release-version.cmake platforms/sdk-image.sh "$exported/platforms/"
+mkdir -p "$exported/platforms/android" "$exported/platforms/kobo" "$exported/assets" "$exported/dependencies"
+cp dependencies/cache.cmake "$exported/dependencies/"
+cp platforms/source-info.cmake platforms/release-version.cmake platforms/sdk-image.sh platforms/load-lock.cmake "$exported/platforms/"
 cp platforms/android/build.sh "$exported/platforms/android/"
 cp platforms/kobo/build.sh "$exported/platforms/kobo/"
 printf '{"version":"v1.0-beta.1"}\n' > "$exported/assets/manifest.json"
@@ -55,8 +169,39 @@ env -u KOBALT_RELEASE_VERSION CONTAINER_ENGINE="$scratch/container-engine" \
     KOBALT_TEST_ENGINE_LOG="$scratch/export-engine.log" bash "$exported/platforms/android/build.sh"
 env -u KOBALT_RELEASE_VERSION CONTAINER_ENGINE="$scratch/container-engine" \
     KOBALT_TEST_ENGINE_LOG="$scratch/export-engine.log" bash "$exported/platforms/kobo/build.sh" qt6
+# A Git-free export uses its own dependency cache, created on the host and
+# mounted at the fixed container path.
+[[ -d $exported/build/dependency-cache ]]
+[[ $(grep -cF -- "--volume $exported/build/dependency-cache:/dependency-cache" "$scratch/export-engine.log") == 2 ]]
+[[ $(grep -cF -- "-DKOBALT_DEPENDENCY_CACHE=/dependency-cache" "$scratch/export-engine.log") == 2 ]]
 grep -Fx 'v9.8.7-beta.6' "$scratch/export-engine.log" > /dev/null
 grep -F 'fffffff OFF' "$scratch/export-engine.log" > /dev/null
+# Direct builds enable diagnostics; an explicit release choice must survive
+# container launch, and diagnostic targets must stay verbose in either mode.
+for target in qt5 qt6; do
+    for mode in default ON OFF; do
+        log="$scratch/diagnostics-$target-$mode.log"
+        if [[ $mode == default ]]; then
+            env -u KOBALT_VERBOSE_DIAGNOSTICS CONTAINER_ENGINE="$scratch/container-engine" \
+                KOBALT_TEST_ENGINE_LOG="$log" bash "$exported/platforms/kobo/build.sh" "$target"
+            expected=ON
+        else
+            KOBALT_VERBOSE_DIAGNOSTICS=$mode CONTAINER_ENGINE="$scratch/container-engine" \
+                KOBALT_TEST_ENGINE_LOG="$log" bash "$exported/platforms/kobo/build.sh" "$target"
+            expected=$mode
+        fi
+        grep -F -- '-DKOBALT_VERBOSE_DIAGNOSTICS="$6"' "$log" > /dev/null
+        grep -F "kobalt-build $target 2 fffffff OFF arm64 fixture-sdk $expected" "$log" > /dev/null
+    done
+    KOBALT_VERBOSE_DIAGNOSTICS=OFF CONTAINER_ENGINE="$scratch/container-engine" \
+        KOBALT_TEST_ENGINE_LOG="$scratch/diagnostic-target.log" bash "$exported/platforms/kobo/build.sh" "$target-diagnostic"
+    grep -F "kobalt-build $target-diagnostic 2 fffffff OFF arm64 fixture-sdk ON" "$scratch/diagnostic-target.log" > /dev/null
+done
+if KOBALT_VERBOSE_DIAGNOSTICS=invalid CONTAINER_ENGINE="$scratch/container-engine" \
+    bash "$exported/platforms/kobo/build.sh" qt5 > "$scratch/error" 2>&1; then
+    echo 'Accepted an invalid diagnostic mode' >&2; exit 1
+fi
+echo 'PASS: direct and release diagnostic build modes'
 if env -u KOBALT_RELEASE_VERSION -u KOBALT_ANDROID_KEYSTORE KOBALT_ANDROID_RELEASE=1 \
     CONTAINER_ENGINE="$scratch/container-engine" bash platforms/android/build.sh > "$scratch/error" 2>&1; then
     echo 'Release checkout accepted a missing version' >&2; exit 1

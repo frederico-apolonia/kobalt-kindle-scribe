@@ -1,15 +1,18 @@
 #pragma once
+#include "reading/sleep_screen.h"
 #include <QObject>
 #include <QPointer>
 #include <QWidget>
 #include <QTime>
 
 namespace kobalt {
+sleep::NativePreview nativeSleepPreview();
 #ifndef KOBALT_READER_HARDWARE
 extern int (*lightTestIoctl)(int, unsigned long, void *);
 #endif
 // Call only after firmwareSupported() accepts Nickel.
-class NativeLight : public QObject {
+class NativeLight : public QObject
+{
     Q_OBJECT
 public:
     explicit NativeLight(QWidget *anchor);
@@ -33,9 +36,8 @@ public:
     int setGestureLevel(int percent);
     void finishGesture(bool save);
     int brightness() const;
-    bool gesturing() const {
-        return gestureStart >= 0;
-    }
+
+    bool gesturing() const { return gestureStart >= 0; }
 
 private:
     QPointer<QWidget> anchor;
@@ -43,4 +45,4 @@ private:
     int gestureStart = -1;
     bool reportedGestureFailure = false, gestureAutomatic = false;
 };
-}
+} // namespace kobalt

@@ -1,6 +1,6 @@
 #include "keyboard.h"
-#include "interfaces/reader/ui/style/fonts.h"
-#include "interfaces/reader/ui/style/scale.h"
+#include "ui/style/fonts.h"
+#include "ui/style/scale.h"
 #include "support/strings.h"
 #include <QCoreApplication>
 #include <QKeyEvent>

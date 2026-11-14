@@ -1,5 +1,5 @@
 #include "services.h"
-#include "interfaces/reader/ui/style/fonts.h"
+#include "ui/style/fonts.h"
 #include "keyboard.h"
 #include "sleep_screen.h"
 #include "support/strings.h"

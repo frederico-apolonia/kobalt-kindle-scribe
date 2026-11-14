@@ -1,4 +1,5 @@
 #include "header_footer.h"
+#include "remaining_time.h"
 #include "reading_progress.h"
 #include "support/strings.h"
 
@@ -6,13 +7,18 @@
 
 namespace kobalt::headerfooter {
 namespace {
-QString savedSize(int size, bool enabled) {
+QString savedSize(int size, bool enabled)
+{
     if (!enabled)
         return QStringLiteral("off");
-    return size >= largeSize ? QStringLiteral("large")
-           : size >= mediumSize ? QStringLiteral("medium") : QStringLiteral("small");
+    return size >= largeSize     ? QStringLiteral("large")
+            : size >= mediumSize ? QStringLiteral("medium")
+                                 : QStringLiteral("small");
 }
-void readSize(const QJsonObject &object, const char *legacyKey, const char *pixelsKey, int &size, bool &enabled) {
+
+void readSize(const QJsonObject &object, const char *legacyKey, const char *pixelsKey, int &size,
+              bool &enabled)
+{
     const auto legacy = object.value(legacyKey).toString();
     if (legacy == "off" || legacy == "small" || legacy == "medium" || legacy == "large") {
         size = legacySize(legacy);
@@ -23,74 +29,115 @@ void readSize(const QJsonObject &object, const char *legacyKey, const char *pixe
     if (pixels.isDouble() && value >= smallSize && value <= maximumSize && value == int(value))
         size = int(value);
 }
-bool anything(const Layout &layout, int first) {
+
+bool anything(const Layout &layout, int first)
+{
     for (int slot = first; slot < first + 3; ++slot)
         if (layout.slotFields[slot] != Field::Nothing)
             return true;
     return false;
 }
-QString pageFraction(int page, int pages) {
+
+QString pageFraction(int page, int pages)
+{
     return pages > 0 ? strings::get("common.page_fraction").arg(page).arg(pages) : QString();
 }
+
 // A standalone estimate remains approximate while reading history accumulates.
-QString timeLeft(qint64 milliseconds, bool learningPace) {
+QString timeLeft(qint64 milliseconds, bool learningPace, bool approximate)
+{
     if (milliseconds < 0)
         return learningPace ? strings::get("header_footer.learning_pace") : QString();
+    if (approximate) {
+        const auto duration = remainingTime::approximateDuration(milliseconds);
+        return duration.isEmpty() ? QString()
+                                  : strings::get("header_footer.time_left").arg(duration);
+    }
     const qint64 minutes = qMax<qint64>(1, (milliseconds + 30000) / 60000);
-    const auto time = minutes < 60 ? strings::get("stats.duration_minutes").arg(minutes)
-                                   : strings::get("stats.duration_hours").arg(minutes / 60).arg(minutes % 60);
+    const auto time = minutes < 60
+            ? strings::get("stats.duration_minutes").arg(minutes)
+            : strings::get("stats.duration_hours").arg(minutes / 60).arg(minutes % 60);
     const auto result = strings::get("header_footer.time_left").arg(time);
     return learningPace ? strings::get("stats.approximate_time").arg(result) : result;
 }
-QString percentDone(int page, int pages) {
-    return pages > 0 ? strings::get("common.percent").arg(pageProgressPercent(qMax(1, page) - 1, pages)) : QString();
+
+QString percentDone(int page, int pages, bool decimal)
+{
+    if (pages <= 0)
+        return {};
+    if (!decimal)
+        return strings::get("common.percent").arg(pageProgressPercent(qMax(1, page) - 1, pages));
+    // Keep the existing page count and round down at the selected precision.
+    // Integer arithmetic avoids rounding a penultimate page up to 100.0%.
+    const qint64 tenths = 1000 * qint64(qBound(1, page, pages)) / pages;
+    return strings::get("common.percent").arg(QString("%1.%2").arg(tenths / 10).arg(tenths % 10));
 }
+
 // Beside a name the page reads 5 of 33, so the slash does not compete with
 // the dot between the two parts.
-QString pageOf(int page, int pages) {
+QString pageOf(int page, int pages)
+{
     return pages > 0 ? strings::get("header_footer.page_of").arg(page).arg(pages) : QString();
 }
-QString joined(const QString &name, const QString &position) {
+
+QString joined(const QString &name, const QString &position)
+{
     if (name.isEmpty() || position.isEmpty())
         return name.isEmpty() ? position : name;
     return strings::get("reader.chapter_position").arg(name, position);
 }
-}
+} // namespace
 
-int legacySize(const QString &value) {
+int legacySize(const QString &value)
+{
     return value == "large" ? largeSize : value == "medium" ? mediumSize : smallSize;
 }
 
-bool Layout::header() const {
+bool Layout::header() const
+{
     return headerEnabled && anything(*this, 0);
 }
-bool Layout::footer() const {
+
+bool Layout::footer() const
+{
     return footerEnabled && anything(*this, 3);
 }
-bool Layout::operator==(const Layout &other) const {
-    return slotFields == other.slotFields && headerSize == other.headerSize && footerSize == other.footerSize &&
-           headerEnabled == other.headerEnabled && footerEnabled == other.footerEnabled &&
-           uppercase == other.uppercase && progressBar == other.progressBar;
+
+bool Layout::operator==(const Layout &other) const
+{
+    return slotFields == other.slotFields && headerSize == other.headerSize
+            && footerSize == other.footerSize && headerEnabled == other.headerEnabled
+            && footerEnabled == other.footerEnabled && uppercase == other.uppercase
+            && progressBar == other.progressBar;
 }
 
-Layout presetLayout(Preset preset) {
+Layout presetLayout(Preset preset)
+{
     Layout layout;
     switch (preset) {
     case Preset::Default:
     case Preset::Custom:
-        layout.slotFields = {Field::Time,             Field::Chapter, Field::Nothing,
-                             Field::ChapterPagesLeft, Field::Nothing, Field::BookPercent};
+        layout.slotFields = { Field::Time,    Field::Chapter,
+                              Field::Nothing, Field::ChapterPagesLeft,
+                              Field::Nothing, Field::BookPercent };
         layout.uppercase.fill(false);
         layout.uppercase[1] = true;
         layout.progressBar = false;
         break;
+    case Preset::Phone:
+        layout.slotFields = { Field::Nothing,          Field::Nothing, Field::Nothing,
+                              Field::ChapterPagesLeft, Field::Nothing, Field::BookPercent };
+        layout.headerEnabled = false;
+        layout.uppercase.fill(false);
+        layout.progressBar = false;
+        break;
     case Preset::AlternativeA:
-        layout.slotFields = {Field::Time,    Field::ChapterAndPage, Field::Nothing,
-                             Field::Nothing, Field::TitleAndPage,   Field::Nothing};
+        layout.slotFields = { Field::Time,    Field::ChapterAndPage, Field::Nothing,
+                              Field::Nothing, Field::TitleAndPage,   Field::Nothing };
         break;
     case Preset::AlternativeB:
-        layout.slotFields = {Field::Nothing,          Field::Time,    Field::Nothing,
-                             Field::ChapterPagesLeft, Field::Nothing, Field::BookPercent};
+        layout.slotFields = { Field::Nothing,          Field::Time,    Field::Nothing,
+                              Field::ChapterPagesLeft, Field::Nothing, Field::BookPercent };
         layout.uppercase.fill(false);
         layout.progressBar = false;
         break;
@@ -98,7 +145,8 @@ Layout presetLayout(Preset preset) {
     return layout;
 }
 
-QString presetValue(Preset preset) {
+QString presetValue(Preset preset)
+{
     switch (preset) {
     case Preset::Default:
         return QStringLiteral("default");
@@ -106,20 +154,24 @@ QString presetValue(Preset preset) {
         return QStringLiteral("alternative_a");
     case Preset::AlternativeB:
         return QStringLiteral("alternative_b");
+    case Preset::Phone:
+        return QStringLiteral("phone");
     case Preset::Custom:
         return QStringLiteral("custom");
     }
     return QStringLiteral("default");
 }
 
-Preset preset(const QString &value) {
+Preset preset(const QString &value)
+{
     for (const auto preset : presets)
         if (presetValue(preset) == value)
             return preset;
     return Preset::Default;
 }
 
-QString fieldValue(Field field) {
+QString fieldValue(Field field)
+{
     switch (field) {
     case Field::Nothing:
         return QStringLiteral("nothing");
@@ -161,17 +213,19 @@ QString fieldValue(Field field) {
     return QStringLiteral("nothing");
 }
 
-Field field(const QString &value) {
+Field field(const QString &value)
+{
     for (const auto field : fields)
         if (fieldValue(field) == value)
             return field;
     return Field::Nothing;
 }
 
-QJsonObject toJson(const Layout &layout) {
+QJsonObject toJson(const Layout &layout)
+{
     QJsonObject object;
-    static const char *const names[slotCount] = {"top_left",    "top_center",    "top_right",
-                                                 "bottom_left", "bottom_center", "bottom_right"};
+    static const char *const names[slotCount] = { "top_left",    "top_center",    "top_right",
+                                                  "bottom_left", "bottom_center", "bottom_right" };
     for (int slot = 0; slot < slotCount; ++slot)
         object[names[slot]] = fieldValue(layout.slotFields[slot]);
     object["header_size"] = savedSize(layout.headerSize, layout.headerEnabled);
@@ -186,10 +240,11 @@ QJsonObject toJson(const Layout &layout) {
     return object;
 }
 
-Layout fromJson(const QJsonObject &object, const Layout &fallback) {
+Layout fromJson(const QJsonObject &object, const Layout &fallback)
+{
     auto layout = fallback;
-    static const char *const names[slotCount] = {"top_left",    "top_center",    "top_right",
-                                                 "bottom_left", "bottom_center", "bottom_right"};
+    static const char *const names[slotCount] = { "top_left",    "top_center",    "top_right",
+                                                  "bottom_left", "bottom_center", "bottom_right" };
     for (int slot = 0; slot < slotCount; ++slot)
         if (object.value(names[slot]).isString())
             layout.slotFields[slot] = field(object.value(names[slot]).toString());
@@ -207,10 +262,11 @@ Layout fromJson(const QJsonObject &object, const Layout &fallback) {
     return layout;
 }
 
-Layout legacyLayout(const QJsonObject &preferences) {
+Layout legacyLayout(const QJsonObject &preferences)
+{
     Layout layout;
-    layout.slotFields = {Field::Time, Field::Chapter, Field::ChapterPage,
-                         Field::Nothing, Field::BookPage, Field::Nothing};
+    layout.slotFields = { Field::Time,    Field::Chapter,  Field::ChapterPage,
+                          Field::Nothing, Field::BookPage, Field::Nothing };
     const bool header = preferences.value("show_header").toBool(true);
     const bool clock = preferences.value("show_clock").toBool(true);
     layout.slotFields[0] = clock ? Field::Time : Field::Nothing;
@@ -231,17 +287,21 @@ Layout legacyLayout(const QJsonObject &preferences) {
     return layout;
 }
 
-Layout customLayout(const QJsonObject &preferences, const Layout &fallback) {
-    return preferences.value(customKey).isObject() ? fromJson(preferences.value(customKey).toObject(), fallback)
-                                                   : fallback;
+Layout customLayout(const QJsonObject &preferences, const Layout &fallback)
+{
+    return preferences.value(customKey).isObject()
+            ? fromJson(preferences.value(customKey).toObject(), fallback)
+            : fallback;
 }
 
-static Selection selectLayout(const QJsonObject &preferences) {
+static Selection selectLayout(const QJsonObject &preferences)
+{
     Selection selection;
     if (preferences.value(presetKey).isString()) {
         selection.preset = preset(preferences.value(presetKey).toString());
-        selection.layout = selection.preset == Preset::Custom ? customLayout(preferences, presetLayout(Preset::Default))
-                                                              : presetLayout(selection.preset);
+        selection.layout = selection.preset == Preset::Custom
+                ? customLayout(preferences, presetLayout(Preset::Default))
+                : presetLayout(selection.preset);
         return selection;
     }
     const auto legacy = legacyLayout(preferences);
@@ -254,7 +314,8 @@ static Selection selectLayout(const QJsonObject &preferences) {
     return selection;
 }
 
-QJsonObject textSettings(const Layout &layout) {
+QJsonObject textSettings(const Layout &layout)
+{
     QJsonObject result;
     result["header_size"] = savedSize(layout.headerSize, layout.headerEnabled);
     result["footer_size"] = savedSize(layout.footerSize, layout.footerEnabled);
@@ -263,15 +324,28 @@ QJsonObject textSettings(const Layout &layout) {
     return result;
 }
 
-Selection select(const QJsonObject &preferences) {
+Selection select(const QJsonObject &preferences, bool phone)
+{
     auto selection = selectLayout(preferences);
+    bool explicitLayout = false;
+    for (const auto *key :
+         { presetKey, customKey, textKey, "show_header", "show_footer", "show_clock",
+           "show_progress_bar", "header_text_size", "footer_text_size" })
+        explicitLayout |= preferences.contains(key);
+    if (phone && !explicitLayout) {
+        selection.preset = Preset::Phone;
+        selection.layout = presetLayout(Preset::Phone);
+    }
     const auto text = preferences.value(textKey).toObject();
-    readSize(text, "header_size", "header_font_size", selection.layout.headerSize, selection.layout.headerEnabled);
-    readSize(text, "footer_size", "footer_font_size", selection.layout.footerSize, selection.layout.footerEnabled);
+    readSize(text, "header_size", "header_font_size", selection.layout.headerSize,
+             selection.layout.headerEnabled);
+    readSize(text, "footer_size", "footer_font_size", selection.layout.footerSize,
+             selection.layout.footerEnabled);
     return selection;
 }
 
-Content content(Field field, const Values &values, bool uppercase) {
+Content content(Field field, const Values &values, bool uppercase)
+{
     Content result;
     switch (field) {
     case Field::Nothing:
@@ -293,10 +367,12 @@ Content content(Field field, const Values &values, bool uppercase) {
         break;
     case Field::ChapterPagesLeft:
         if (values.chapterPages > 0) {
-            const int left = qMax(0, values.chapterPages - values.chapterPage);
-            result.text = strings::get("header_footer.pages_left")
-                              .arg(left)
-                              .arg(strings::get(left == 1 ? "stats.page_left" : "stats.pages_left"));
+            // The current page is still to be read, as in Stats: the last page shows 1.
+            const int left = qMax(1, values.chapterPages - values.chapterPage + 1);
+            result.text =
+                    strings::get("header_footer.pages_left")
+                            .arg(left)
+                            .arg(strings::get(left == 1 ? "stats.page_left" : "stats.pages_left"));
         }
         break;
     case Field::ChapterAndPage:
@@ -311,7 +387,8 @@ Content content(Field field, const Values &values, bool uppercase) {
     case Field::BatteryPercent:
     case Field::Battery:
     case Field::BatteryWarning:
-        if (field == Field::BatteryWarning && (values.battery < 0 || values.battery >= batteryWarningBelow))
+        if (field == Field::BatteryWarning
+            && (values.battery < 0 || values.battery >= batteryWarningBelow))
             break;
         if (values.deviceStatus) {
             if (field != Field::Battery && values.battery >= 0)
@@ -326,16 +403,19 @@ Content content(Field field, const Values &values, bool uppercase) {
         result.text = values.time;
         break;
     case Field::ChapterTimeLeft:
-        result.text = timeLeft(values.chapterMilliseconds, values.learningPace);
+        result.text =
+                timeLeft(values.chapterMilliseconds, values.learningPace, values.approximateTime);
         break;
     case Field::BookTimeLeft:
-        result.text = timeLeft(values.bookMilliseconds, values.learningPace);
+        result.text =
+                timeLeft(values.bookMilliseconds, values.learningPace, values.approximateTime);
         break;
     case Field::ChapterPercent:
-        result.text = percentDone(values.chapterPage, values.chapterPages);
+        result.text =
+                percentDone(values.chapterPage, values.chapterPages, values.decimalPercentages);
         break;
     case Field::BookPercent:
-        result.text = percentDone(values.page, values.pages);
+        result.text = percentDone(values.page, values.pages, values.decimalPercentages);
         break;
     }
     if (uppercase) {
@@ -346,11 +426,13 @@ Content content(Field field, const Values &values, bool uppercase) {
     return result;
 }
 
-bool pageCount(Field field) {
+bool pageCount(Field field)
+{
     return field == Field::ChapterPage || field == Field::BookPage;
 }
 
-QString fieldLabel(Field field) {
+QString fieldLabel(Field field)
+{
     switch (field) {
     case Field::Nothing:
         return strings::get("header_footer.field.nothing");
@@ -392,10 +474,12 @@ QString fieldLabel(Field field) {
     return {};
 }
 
-QString fieldDescription(Field field) {
+QString fieldDescription(Field field)
+{
     switch (field) {
     case Field::BatteryWarning:
-        return strings::get("header_footer.field_description.battery_warning").arg(batteryWarningBelow);
+        return strings::get("header_footer.field_description.battery_warning")
+                .arg(batteryWarningBelow);
     case Field::ChapterTimeLeft:
     case Field::BookTimeLeft:
         return strings::get("header_footer.field_description.time_left");
@@ -404,15 +488,19 @@ QString fieldDescription(Field field) {
     }
 }
 
-QString slotLabel(int slot) {
-    static const char *const keys[slotCount] = {
-        strings::key("header_footer.slot.top_left"),      strings::key("header_footer.slot.top_center"),
-        strings::key("header_footer.slot.top_right"),     strings::key("header_footer.slot.bottom_left"),
-        strings::key("header_footer.slot.bottom_center"), strings::key("header_footer.slot.bottom_right")};
+QString slotLabel(int slot)
+{
+    static const char *const keys[slotCount] = { strings::key("header_footer.slot.top_left"),
+                                                 strings::key("header_footer.slot.top_center"),
+                                                 strings::key("header_footer.slot.top_right"),
+                                                 strings::key("header_footer.slot.bottom_left"),
+                                                 strings::key("header_footer.slot.bottom_center"),
+                                                 strings::key("header_footer.slot.bottom_right") };
     return slot >= 0 && slot < slotCount ? strings::get(keys[slot]) : QString();
 }
 
-QString presetLabel(Preset preset) {
+QString presetLabel(Preset preset)
+{
     switch (preset) {
     case Preset::Default:
         return strings::get("header_footer.preset.default");
@@ -420,9 +508,11 @@ QString presetLabel(Preset preset) {
         return strings::get("header_footer.preset.alternative_a");
     case Preset::AlternativeB:
         return strings::get("header_footer.preset.alternative_b");
+    case Preset::Phone:
+        return strings::get("header_footer.preset.phone");
     case Preset::Custom:
         return strings::get("header_footer.preset.custom");
     }
     return {};
 }
-}
+} // namespace kobalt::headerfooter
