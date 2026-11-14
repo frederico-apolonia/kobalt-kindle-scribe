@@ -7,6 +7,7 @@
 #include "ui/controls/paging.h"
 #include "ui/controls/rows.h"
 #include "ui/dialogs/action_menu.h"
+#include "ui/dialogs/choice_sheet.h"
 #include "ui/dialogs/modals.h"
 #include "ui/style/fonts.h"
 #include "ui/style/styles.h"
@@ -41,6 +42,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QtMath>
+#include <memory>
 
 namespace kobalt::library {
 namespace chrome = ui::metrics::chrome;
@@ -1625,36 +1627,22 @@ void LibraryView::showSettings() {
     // Rows the page lays out when it appears take the theme too.
     setDark(dark);
 }
-// A pick-one row of the Settings page: its choices in a card, like the reader's settings choices.
-void LibraryView::showHostChoice(int index) {
+// A pick-one row of the Settings page: its choices in the shared choice sheet, as the reader's settings show theirs.
+void LibraryView::showHostChoice(int index)
+{
     if (index < 0 || index >= hostOptions.size())
         return;
     closeOverlay();
-    namespace nm = ui::metrics::notice;
     const auto &option = hostOptions[index];
-    auto *sheet = new ui::ModalOverlay(this);
-    sheet->setObjectName("librarySettingChoice");
-    overlay = sheet;
-    sheet->setDimmed(true);
-    sheet->dismissed = [this] {
-        closeOverlay();
-    };
-    auto *card = sheet->card();
-    card->rows()->setContentsMargins(2, 2, 2, 2);
-    card->rows()->setSpacing(0);
-    card->rows()->addSpacing(nm::cardMargins.top());
-    auto *title = card->title(option.title, "librarySettingChoiceTitle");
-    title->setContentsMargins(chrome::inset, 0, chrome::inset, 0);
-    card->rows()->addSpacing(nm::cardMargins.bottom());
-    const int cardWidth = qMin<int>(nm::cardWidth, width() - 2 * nm::sideClearance);
-    auto *choices = new ui::RadioList(card);
-    choices->setObjectName("librarySettingChoices");
-    choices->setMinimumRowHeight(chrome::listActionHeight);
-    choices->setTopDivider(true);
+    const auto sheet = ui::makeChoiceSheet(this, "librarySettingChoice", option.title, {},
+                                           "librarySettingChoiceTitle");
+    overlay = sheet.overlay;
+    sheet.overlay->dismissed = [this] { closeOverlay(); };
     for (int i = 0; i < option.choices.size(); ++i)
-        choices->add(QString("librarySettingChoice%1").arg(i), option.choices[i], option.details.value(i));
-    choices->setCurrent(option.value ? option.value() : 0);
-    choices->chosen = [this, index](int choice) {
+        sheet.list->add(QString("librarySettingChoice%1").arg(i), option.choices[i],
+                        option.details.value(i));
+    sheet.list->setCurrent(option.value ? option.value() : 0);
+    sheet.list->chosen = [this, index](int choice) {
         // The overlay goes away with the row that was tapped, so take what is needed first.
         const auto chosen = hostOptions.value(index).choose;
         closeOverlay();
@@ -1663,15 +1651,57 @@ void LibraryView::showHostChoice(int index) {
         if (settingsPage)
             settingsPage->refresh();
     };
-    card->rows()->addWidget(choices);
-    choices->setFixedHeight(choices->heightForWidth(cardWidth - 4));
-    card->fitToWidth(cardWidth);
     setDark(dark);
-    sheet->setGeometry(rect());
-    sheet->centerCard();
-    sheet->show();
-    sheet->raise();
-    sheet->setFocus();
+    ui::fitChoiceSheet(sheet.overlay, sheet.list);
+    // A list taller than the screen pages its rows under a pager, as the reader's own long choices do.
+    namespace notice = ui::metrics::notice;
+    auto *card = sheet.overlay->card();
+    auto *list = sheet.list;
+    const int cardWidth = qMin<int>(notice::cardWidth, width() - 2 * notice::sideClearance);
+    const int rowWidth = cardWidth - 2 * notice::cardBorder;
+    const int available = height() - 2 * notice::sideClearance;
+    if (card->height() > available) {
+        auto *pager = new ui::PagerBar(card, "librarySettingChoice");
+        card->rows()->addWidget(pager);
+        const int fixed = card->height() - list->height();
+        const int room = qMax(1, available - fixed - int(chrome::actionHeight));
+        QVector<int> starts{ 0 };
+        int used = 0;
+        for (int row = 0; row < list->options().size(); ++row) {
+            const int rowHeight = list->rowHeight(row, rowWidth);
+            if (used && used + rowHeight > room) {
+                starts.append(row);
+                used = 0;
+            }
+            used += rowHeight;
+        }
+        auto page = std::make_shared<int>(0);
+        const int current = option.value ? option.value() : 0;
+        for (int i = 0; i < starts.size(); ++i)
+            if (starts[i] <= current)
+                *page = i;
+        const auto showPage = [overlay = sheet.overlay, list, pager, card, cardWidth, starts, room, page] {
+            const int first = starts[*page];
+            const int last = *page + 1 < starts.size() ? starts[*page + 1] : int(list->options().size());
+            list->showRows(first, last - first);
+            list->setFixedHeight(room);
+            pager->setPage(*page, starts.size());
+            card->fitToWidth(cardWidth);
+            overlay->centerCard();
+        };
+        connect(pager->previous, &QPushButton::clicked, sheet.overlay, [page, pager, showPage] {
+            *page = pager->turnTarget(-1);
+            showPage();
+        });
+        connect(pager->next, &QPushButton::clicked, sheet.overlay, [page, pager, showPage] {
+            *page = pager->turnTarget(1);
+            showPage();
+        });
+        showPage();
+    }
+    sheet.overlay->show();
+    sheet.overlay->raise();
+    sheet.overlay->setFocus();
 }
 
 void LibraryView::showBookMenu(const QString &key)
